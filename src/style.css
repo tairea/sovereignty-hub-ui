@@ -647,14 +647,14 @@
     aspect-ratio: 1;
     border-radius: 2px;
   }
-  /* ---------- Hub settings modal ---------- */
-  #hub-modal[hidden] { display: none; }
-  #hub-modal .modal-backdrop {
+  /* ---------- Modals (hub details + auth) ---------- */
+  .modal[hidden] { display: none; }
+  .modal .modal-backdrop {
     position: fixed; inset: 0;
     background: rgba(0, 0, 0, 0.7);
     z-index: 100;
   }
-  #hub-modal .modal-panel {
+  .modal .modal-panel {
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
@@ -669,11 +669,11 @@
     z-index: 101;
     box-shadow: 0 10px 50px rgba(0, 0, 0, 0.7);
   }
-  #hub-modal h3 {
+  .modal h3 {
     margin: 0 0 16px;
     font-size: 16px;
   }
-  #hub-modal label {
+  .modal label {
     display: block;
     margin-bottom: 14px;
     font-size: 12px;
@@ -681,12 +681,13 @@
     letter-spacing: 0.3px;
     text-transform: uppercase;
   }
-  #hub-modal label > span {
+  .modal label > span {
     display: block;
     margin-bottom: 6px;
   }
-  #hub-modal input[type=text],
-  #hub-modal input[type=url] {
+  .modal input[type=text],
+  .modal input[type=email],
+  .modal input[type=url] {
     width: 100%;
     padding: 8px 10px;
     background: var(--panel-2);
@@ -698,7 +699,7 @@
     text-transform: none;
     letter-spacing: 0;
   }
-  #hub-modal input:focus { outline: none; border-color: var(--accent); }
+  .modal input:focus { outline: none; border-color: var(--accent); }
   .image-cropper {
     display: flex;
     flex-direction: column;

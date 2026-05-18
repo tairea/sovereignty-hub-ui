@@ -69,7 +69,7 @@
   </div>
 </div>
 
-<div id="hub-modal" hidden>
+<div id="hub-modal" class="modal" hidden>
   <div class="modal-backdrop"></div>
   <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="hub-modal-title">
     <h3 id="hub-modal-title">Sovereign Hub Details</h3>
@@ -109,18 +109,18 @@
       <span>Hub external link</span>
       <input type="url" id="hub-link-input" placeholder="https://yourhub.example" />
     </label>
-    <div class="modal-actions">
-      <button type="button" class="nav-btn" id="hub-cancel">Cancel</button>
-      <button type="button" class="nav-btn primary" id="hub-save">Save</button>
-    </div>
     <div id="hub-signed-in-row" class="signed-in-row" hidden>
       <span>Signed in as <span id="hub-signed-in-email"></span></span>
       <button type="button" id="hub-sign-out" class="link-btn">Sign out</button>
     </div>
+    <div class="modal-actions">
+      <button type="button" class="nav-btn" id="hub-cancel">Cancel</button>
+      <button type="button" class="nav-btn primary" id="hub-save">Save</button>
+    </div>
   </div>
 </div>
 
-<div id="auth-modal" hidden>
+<div id="auth-modal" class="modal" hidden>
   <div class="modal-backdrop"></div>
   <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
     <h3 id="auth-modal-title">Sign in or create an account</h3>
