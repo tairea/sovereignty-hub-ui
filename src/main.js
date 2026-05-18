@@ -1,5 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  authState,
+  subscribe as subscribeAuth,
+  init as initAuth,
+  signInWithEmail,
+  signOut,
+} from './lib/auth.js';
 
 // ----- Data -----
 const PILLARS = [
@@ -115,6 +122,8 @@ function loadState() {
 }
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ answers, descriptions, hub, cursor, maxReached }));
+  // Reflect "has unsaved progress" state in the auth UI (chip visibility, etc.)
+  if (typeof refreshAuthUI === 'function') refreshAuthUI();
 }
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1054,7 +1063,16 @@ const hubImageInput = document.getElementById('hub-image-input');
 const hubImageClearBtn = document.getElementById('hub-image-clear');
 const hubCancelBtn = document.getElementById('hub-cancel');
 const hubSaveBtn = document.getElementById('hub-save');
+const hubSignedInRow = document.getElementById('hub-signed-in-row');
+const hubSignedInEmail = document.getElementById('hub-signed-in-email');
+const hubSignOutBtn = document.getElementById('hub-sign-out');
 const profileBtn = document.getElementById('profile-toggle');
+const unsavedChip = document.getElementById('unsaved-chip');
+const authModal = document.getElementById('auth-modal');
+const authEmailInput = document.getElementById('auth-email-input');
+const authStatusEl = document.getElementById('auth-status');
+const authSendBtn = document.getElementById('auth-send');
+const authCancelBtn = document.getElementById('auth-cancel');
 const cropperCanvas = document.getElementById('cropper-canvas');
 const cropperWrap = document.getElementById('cropper-wrap');
 const cropperPlaceholder = document.getElementById('cropper-placeholder');
@@ -1198,9 +1216,84 @@ function closeHubModal() {
   hubModal.hidden = true;
 }
 
-profileBtn.addEventListener('click', openHubModal);
+// Profile-icon click routes by auth state: signed-in → hub modal, else → sign-in modal
+profileBtn.addEventListener('click', () => {
+  if (authState.status === 'signed-in') openHubModal();
+  else openAuthModal();
+});
+// The unsaved-changes chip is a shortcut to the same sign-in flow
+unsavedChip.addEventListener('click', openAuthModal);
 hubCancelBtn.addEventListener('click', closeHubModal);
 hubModal.querySelector('.modal-backdrop').addEventListener('click', closeHubModal);
+
+// --- Auth modal handlers ---
+function openAuthModal() {
+  authEmailInput.value = authState.user?.email || '';
+  authStatusEl.textContent = '';
+  authStatusEl.classList.remove('ok', 'err');
+  authSendBtn.disabled = false;
+  authModal.hidden = false;
+  setTimeout(() => authEmailInput.focus(), 30);
+}
+function closeAuthModal() { authModal.hidden = true; }
+
+authCancelBtn.addEventListener('click', closeAuthModal);
+authModal.querySelector('.modal-backdrop').addEventListener('click', closeAuthModal);
+authEmailInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); authSendBtn.click(); }
+});
+authSendBtn.addEventListener('click', async () => {
+  const email = authEmailInput.value.trim();
+  if (!email) {
+    authStatusEl.textContent = 'Type your email first.';
+    authStatusEl.classList.remove('ok'); authStatusEl.classList.add('err');
+    return;
+  }
+  authSendBtn.disabled = true;
+  authStatusEl.classList.remove('ok', 'err');
+  authStatusEl.textContent = 'Sending magic link…';
+  const result = await signInWithEmail(email);
+  authSendBtn.disabled = false;
+  if (result.error) {
+    authStatusEl.classList.add('err');
+    authStatusEl.textContent = result.error;
+  } else {
+    authStatusEl.classList.add('ok');
+    authStatusEl.textContent = `Check your inbox at ${email} and click the link to sign in.`;
+  }
+});
+
+// Sign out from the hub modal
+hubSignOutBtn.addEventListener('click', async () => {
+  await signOut();
+  closeHubModal();
+});
+
+// --- Auth-driven UI sync ---
+function refreshAuthUI() {
+  if (!unsavedChip || !profileBtn) return;
+  const signedIn = authState.status === 'signed-in';
+  const hasAnswers = answers && Object.keys(answers).length > 0;
+  // Chip: only when signed-out AND there's local progress that hasn't been synced
+  unsavedChip.hidden = signedIn || !hasAnswers;
+  // Pip on the profile icon
+  profileBtn.classList.toggle('signed-in', signedIn);
+  // Signed-in row inside the hub modal
+  if (signedIn) {
+    hubSignedInRow.hidden = false;
+    hubSignedInEmail.textContent = authState.user?.email || '';
+  } else {
+    hubSignedInRow.hidden = true;
+  }
+}
+
+subscribeAuth((state) => {
+  refreshAuthUI();
+  // If a magic link just landed and the auth modal is open, close it
+  if (state.status === 'signed-in' && authModal && !authModal.hidden) {
+    closeAuthModal();
+  }
+});
 
 hubImageInput.addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
@@ -1238,7 +1331,9 @@ hubSaveBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (!hubModal.hidden && e.key === 'Escape') closeHubModal();
+  if (e.key !== 'Escape') return;
+  if (!hubModal.hidden) closeHubModal();
+  if (!authModal.hidden) closeAuthModal();
 });
 
 // ---------- Mobile panel-resize drag handle ----------
@@ -1341,3 +1436,5 @@ loadState();
 updateViz();
 updateHubDisplay();
 renderQuestion();
+refreshAuthUI();    // paint chip / pip with whatever loadState left us
+initAuth();         // kicks off async session read + subscription

@@ -51,7 +51,11 @@
         </div>
       </div>
     </div>
-    <button id="profile-toggle" type="button" title="Hub settings">
+    <button id="unsaved-chip" type="button" hidden title="Sign in to save your progress">
+      <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+      <span>unsaved · sign in</span>
+    </button>
+    <button id="profile-toggle" type="button" title="Sovereignty Hub Details">
       <i class="fa-solid fa-user" aria-hidden="true"></i>
     </button>
     <div id="viz-popup" class="viz-popup" hidden>
@@ -108,6 +112,29 @@
     <div class="modal-actions">
       <button type="button" class="nav-btn" id="hub-cancel">Cancel</button>
       <button type="button" class="nav-btn primary" id="hub-save">Save</button>
+    </div>
+    <div id="hub-signed-in-row" class="signed-in-row" hidden>
+      <span>Signed in as <span id="hub-signed-in-email"></span></span>
+      <button type="button" id="hub-sign-out" class="link-btn">Sign out</button>
+    </div>
+  </div>
+</div>
+
+<div id="auth-modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <h3 id="auth-modal-title">Sign in or create an account</h3>
+    <label>
+      <span>Email</span>
+      <input type="email" id="auth-email-input" placeholder="you@example.com" autocomplete="email" />
+    </label>
+    <p class="auth-help">
+      We'll email you a one-tap sign-in link. If you're new, your account is created when you click it.
+    </p>
+    <div id="auth-status" class="auth-status"></div>
+    <div class="modal-actions">
+      <button type="button" class="nav-btn" id="auth-cancel">Cancel</button>
+      <button type="button" class="nav-btn primary" id="auth-send">Send magic link</button>
     </div>
   </div>
 </div>

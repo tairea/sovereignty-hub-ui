@@ -151,6 +151,94 @@
     transition: color 0.15s ease, border-color 0.15s ease;
   }
   #profile-toggle:hover { color: var(--text); border-color: var(--text); }
+  /* Green "signed-in" pip on the profile icon */
+  #profile-toggle.signed-in::after {
+    content: '';
+    position: absolute;
+    bottom: 1px; right: 1px;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--scale);
+    border: 2px solid #000;
+    box-sizing: border-box;
+  }
+  /* Unsaved-changes chip sitting to the LEFT of the profile icon */
+  #unsaved-chip {
+    position: absolute;
+    bottom: 14px;             /* center-aligns with the 32px profile icon */
+    right: 52px;              /* 12 (right) + 32 (icon) + 8 (gap) */
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    color: var(--accent);
+    font: inherit;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #unsaved-chip[hidden] { display: none; }
+  #unsaved-chip:hover {
+    background: rgba(241, 196, 15, 0.18);
+    color: var(--text);
+  }
+  #unsaved-chip i { font-size: 11px; }
+  @media (max-width: 900px) {
+    #unsaved-chip {
+      position: fixed;
+      top: calc(var(--mobile-viz-h) - 26px);
+      right: 52px;
+      bottom: auto;
+      z-index: 31;
+    }
+  }
+  /* Help paragraph inside auth modal */
+  .auth-help {
+    margin: 4px 0 10px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  /* Auth status line — mirrors the location-status pattern */
+  .auth-status {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+    line-height: 1.4;
+    min-height: 16px;
+  }
+  .auth-status.ok { color: var(--scale); }
+  .auth-status.err { color: var(--survive); }
+  /* Signed-in row at the bottom of the hub modal */
+  .signed-in-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-top: 14px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .signed-in-row[hidden] { display: none; }
+  #hub-signed-in-email { color: var(--text); font-weight: 500; }
+  .signed-in-row .link-btn { padding: 4px 0; }
   #legend-popup .row { display: flex; align-items: center; gap: 8px; }
   #legend-popup .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
   #legend-popup .s-survive { background: var(--survive); }
