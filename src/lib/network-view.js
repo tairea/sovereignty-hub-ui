@@ -235,22 +235,28 @@ async function loadHubs() {
     emptyEl.textContent = 'Supabase not configured.';
     return;
   }
-  const { data, error } = await supabase
-    .from('profiles')
-    .select(`
-      id, hub_name, hub_email, hub_link, hub_image_url,
-      survey_state ( answers, descriptions, cursor, max_reached )
-    `);
+  // profiles and survey_state both reference auth.users but not each other,
+  // so PostgREST can't auto-join them. Fetch separately and merge.
+  const [profilesRes, surveyRes] = await Promise.all([
+    supabase.from('profiles').select('id, hub_name, hub_email, hub_link, hub_image_url'),
+    supabase.from('survey_state').select('user_id, answers, descriptions, cursor, max_reached'),
+  ]);
   loadingEl.hidden = true;
-  if (error) {
+  if (profilesRes.error || surveyRes.error) {
     emptyEl.hidden = false;
     emptyEl.textContent = 'Failed to load hubs.';
-    console.error('[network] load failed', error);
+    console.error('[network] load failed', profilesRes.error || surveyRes.error);
     return;
   }
+  const surveysByUser = new Map();
+  for (const s of (surveyRes.data || [])) surveysByUser.set(s.user_id, s);
+  const merged = (profilesRes.data || []).map((p) => ({
+    ...p,
+    survey_state: surveysByUser.get(p.id) || null,
+  }));
   // Hide rows with no hub_name set — those are signed-in users who haven't
   // filled in their profile yet. They'd render as nameless circles.
-  const populated = (data || []).filter((r) => r.hub_name && r.hub_name.trim());
+  const populated = merged.filter((r) => r.hub_name && r.hub_name.trim());
   if (populated.length === 0) {
     emptyEl.hidden = false;
     return;
