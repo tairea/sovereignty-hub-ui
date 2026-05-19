@@ -13,6 +13,7 @@ import {
   saveProfile,
   flushPending as flushRemote,
 } from './lib/db.js';
+import { SURVEY_CONTENT } from './lib/survey-content/index.js';
 
 // ----- Data -----
 const PILLARS = [
@@ -48,60 +49,7 @@ const PHASES = [
   { key:'scale',   label:'Scale',        color:'#2ecc71' },
 ];
 
-// Contextual copy: per-layer question description and per-(layer × phase) subtitle.
-// Functions take the current pillar object so we can interpolate the pillar name.
-const noun = (p) => p.name.toLowerCase();
-const QUESTIONS = {
-  0: { // SURVIVAL
-    qdesc: (p) => `Grid goes down right now with zero prep. How would you handle ${noun(p)} from whatever's already in your house, yard, or street?`,
-    none:    (p) => `You haven't thought about ${noun(p)} from this angle yet.`,
-    survive: (p) => `You'd scrape by — tense, improvised, but functional.`,
-    build:   (p) => `You've thought it through; you could stay calm and methodical.`,
-    scale:   (p) => `You could walk a panicked stranger through ${noun(p)} under pressure.`,
-  },
-  1: { // PREPAREDNESS
-    qdesc: (p) => `Have you built a ready-to-go ${noun(p)} kit and trained yourself on it before you actually need it?`,
-    none:    (p) => `No kit assembled for ${noun(p)} yet.`,
-    survive: (p) => `Bare-bones kit thrown together; never tested it.`,
-    build:   (p) => `Solid kit, maintained, and you've drilled with it.`,
-    scale:   (p) => `You assemble and sell ${noun(p)} preparedness kits to others.`,
-  },
-  2: { // STOCKPILE
-    qdesc: (p) => `Are you stockpiling ${noun(p)} materials or strategic reserves — inventory that holds or appreciates in a crunch?`,
-    none:    (p) => `Nothing set aside specifically for ${noun(p)}.`,
-    survive: (p) => `Modest reserve — a few weeks' buffer at most.`,
-    build:   (p) => `Stockpile growing steadily and trade-ready.`,
-    scale:   (p) => `You move ${noun(p)} inventory in bulk and supply others.`,
-  },
-  3: { // PRODUCTION
-    qdesc: (p) => `Are you producing ${noun(p)} goods yourself — kits, parts, repairs, components? This is where 40–80% margins start.`,
-    none:    (p) => `Not producing anything ${noun(p)}-related yet.`,
-    survive: (p) => `Tinkering — first prototypes coming together.`,
-    build:   (p) => `Selling steady output and refining the product.`,
-    scale:   (p) => `Production at volume — repeatable, distributable, profitable.`,
-  },
-  4: { // COMMERCE
-    qdesc: (p) => `Are you curating and selling ${noun(p)} products — your catalog, drop-ship, market stall, online store?`,
-    none:    (p) => `No ${noun(p)} listings or sales channels live.`,
-    survive: (p) => `A few listings up; one or two sales trickling in.`,
-    build:   (p) => `Catalog is growing and orders come in regularly.`,
-    scale:   (p) => `Multi-channel storefront with predictable monthly revenue.`,
-  },
-  5: { // TEACHING
-    qdesc: (p) => `Are you teaching ${noun(p)} through classes, guides, installs, or consulting? Knowledge transfer carries the highest margins.`,
-    none:    (p) => `Not teaching ${noun(p)} to anyone yet.`,
-    survive: (p) => `Helped a friend; thinking about a first class.`,
-    build:   (p) => `Running classes or installs regularly and getting paid.`,
-    scale:   (p) => `Curriculum is packaged, franchised, or training other instructors.`,
-  },
-  6: { // INNOVATION
-    qdesc: (p) => `Are you working on a category-defining ${noun(p)} innovation — something the Fortune 500 hasn't shipped yet?`,
-    none:    (p) => `No ${noun(p)} R&D in progress.`,
-    survive: (p) => `Idea sketched; experimenting at the edges.`,
-    build:   (p) => `Working prototype proving the concept in the wild.`,
-    scale:   (p) => `Shipped innovation gaining real traction — venture-scale outcomes possible.`,
-  },
-};
+// Survey copy is per-pillar-per-layer. See src/lib/survey-content/.
 
 const PHASE_ORDER = ['none','survive','build','scale'];
 const TOTAL_Q = PILLARS.length * LAYERS.length; // 91
@@ -899,9 +847,9 @@ function renderQuestion() {
   const hasSel = current !== undefined && current !== null;
   const descVal = descriptions[qKey] || '';
 
-  const ctx = QUESTIONS[lIdx];
-  const subFor = (phKey) => (ctx && typeof ctx[phKey] === 'function') ? ctx[phKey](pillar) : '';
-  const qdescText = ctx ? ctx.qdesc(pillar) : layer.desc;
+  const ctx = SURVEY_CONTENT[pIdx]?.[lIdx];
+  const subFor = (phKey) => (ctx && typeof ctx[phKey] === 'string') ? ctx[phKey] : '';
+  const qdescText = ctx?.qdesc || layer.desc;
 
   qbody.innerHTML = `
     <span class="pillar-chip" style="border-color:${pillar.color};color:${pillar.color}">
