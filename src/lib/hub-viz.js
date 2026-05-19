@@ -357,6 +357,8 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
     return false;
   }
 
+  const INACTIVE_NODE_COLOR = new THREE.Color('#2a3340');
+
   function updateIconForPillar(pn, hasAny) {
     // Active pillars get white icons at full alpha; empty pillars stay
     // visible but dimmed so you can still read the pillar but the eye is
@@ -365,6 +367,20 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
     const alpha = hasAny ? 1.0 : 0.35;
     drawIcon(pn.iconObj.ctx, pn.p.icon, color, pn.iconObj.canvas.width, alpha);
     pn.iconObj.tex.needsUpdate = true;
+  }
+
+  function updateNodeForPillar(pn, hasAny) {
+    // The colored ring node should only be lit in the pillar's color when
+    // that pillar has at least one answered layer. Empty pillars get a
+    // dim neutral node so a glance shows which pillars the hub has
+    // engaged with.
+    const base = hasAny ? new THREE.Color(pn.p.color) : INACTIVE_NODE_COLOR;
+    pn.node.material.color.copy(base);
+    pn.node.material.emissive.copy(hasAny ? base.clone().multiplyScalar(0.5) : new THREE.Color(0x000000));
+    pn.node.material.emissiveIntensity = hasAny ? 0.6 : 0;
+    pn.node.material.opacity = hasAny ? 1.0 : 0.55;
+    pn.node.material.needsUpdate = true;
+    pn.labelSpr.material.opacity = hasAny ? 0.85 : 0.3;
   }
 
   function paintAnswers({ answers: nextAnswers = {}, descriptions: nextDescriptions = {} } = {}) {
@@ -384,7 +400,9 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
         const desc = nextDescriptions[answerKey(pIdx, lIdx)];
         bar.commentDot.visible = !!(desc && desc.trim());
       });
-      updateIconForPillar(pn, pillarHasAnyAnswer(pIdx, nextAnswers));
+      const hasAny = pillarHasAnyAnswer(pIdx, nextAnswers);
+      updateIconForPillar(pn, hasAny);
+      updateNodeForPillar(pn, hasAny);
     });
   }
 
