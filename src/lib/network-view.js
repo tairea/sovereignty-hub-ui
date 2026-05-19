@@ -7,12 +7,20 @@ import {
   answerKey,
 } from './hub-viz.js';
 
-// One hub plus its outermost-label radius — used to space out the grid.
-const HUB_FOOTPRINT = (NODE_LEN / 2 + 0 + LAYERS.length * (LAYER_LEN + LAYER_GAP) + 0.55) * 2;
+// Spoke length from hub center to the outer end of the last layer bar
+// (this is also where the pillar label sprite is anchored).
+const SPOKE_END_RADIUS = NODE_LEN / 2 + LAYERS.length * (LAYER_LEN + LAYER_GAP) + 0.55;
 
-// Tighter than HUB_FOOTPRINT so the grid feels populated.
-const COL_STEP = HUB_FOOTPRINT * 0.95;
-const ROW_STEP = HUB_FOOTPRINT * 1.05;
+// Labels are 3.4-wide sprites centered on the spoke end, so they extend
+// ~1.7 units past the bar tip in every direction. Add label padding plus a
+// small visual gap so adjacent hubs never overlap regardless of which
+// pillars happen to be facing each other.
+const LABEL_HALF_WIDTH = 1.7;
+const VISUAL_GAP = 1.5;
+const HUB_FOOTPRINT = (SPOKE_END_RADIUS + LABEL_HALF_WIDTH + VISUAL_GAP) * 2;
+
+const COL_STEP = HUB_FOOTPRINT;
+const ROW_STEP = HUB_FOOTPRINT;
 
 const COLS_DESKTOP = 3;
 const COLS_MOBILE = 1;
