@@ -451,6 +451,11 @@ function updateHubDisplay() {
   centerDot.visible = false;
   if (hasImg) {
     const img = new Image();
+    // Once the avatar is uploaded, imageDataUrl is a Supabase Storage URL
+    // (https://...). Without crossOrigin the image loads but taints the
+    // canvas, and the resulting texture renders blank. Data URLs (fresh
+    // crops before upload) ignore crossOrigin, so this is safe for both.
+    img.crossOrigin = 'anonymous';
     img.onload = () => {
       hubImgEl = img;
       paintHubCanvas();
