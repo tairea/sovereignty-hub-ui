@@ -1,23 +1,25 @@
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { supabase } from './supabase.js';
 import {
   createHub,
-  RING_RADIUS, NODE_LEN, LAYER_LEN, LAYER_GAP,
+  RING_RADIUS, NODE_LEN, NODE_GAP, LAYER_LEN, LAYER_GAP,
   LAYERS, PILLARS,
   answerKey,
 } from './hub-viz.js';
 
-// Spoke length from hub center to the outer end of the last layer bar
-// (this is also where the pillar label sprite is anchored).
-const SPOKE_END_RADIUS = NODE_LEN / 2 + LAYERS.length * (LAYER_LEN + LAYER_GAP) + 0.55;
-
-// Labels are 3.4-wide sprites centered on the spoke end, so they extend
-// ~1.7 units past the bar tip in every direction. Add label padding plus a
-// small visual gap so adjacent hubs never overlap regardless of which
-// pillars happen to be facing each other.
+// True radial distance from a hub's center to the outer tip of its label
+// sprite. The bar layout puts the node at RING_RADIUS, then the spoke
+// extends outward by `NODE_LEN/2 + NODE_GAP + 7 * (LAYER_LEN + LAYER_GAP) + 0.55`,
+// then the label sprite extends another ~1.7 units past that.
+const SPOKE_END_FROM_HUB =
+  RING_RADIUS + NODE_LEN / 2 + NODE_GAP + LAYERS.length * (LAYER_LEN + LAYER_GAP) + 0.55;
 const LABEL_HALF_WIDTH = 1.7;
+const HUB_FULL_RADIUS = SPOKE_END_FROM_HUB + LABEL_HALF_WIDTH;
+
+// Extra gap between hub footprints in the grid.
 const VISUAL_GAP = 10;
-const HUB_FOOTPRINT = (SPOKE_END_RADIUS + LABEL_HALF_WIDTH + VISUAL_GAP) * 2;
+const HUB_FOOTPRINT = (HUB_FULL_RADIUS + VISUAL_GAP) * 2;
 
 const COL_STEP = HUB_FOOTPRINT;
 const ROW_STEP = HUB_FOOTPRINT;
@@ -60,11 +62,11 @@ let viewerAnimState = null; // { startRotY, endRotY, startTime, duration }
 // Viewer mode state (single hub centered for reading)
 let viewerScene = null;
 let viewerCamera = null;
-let viewerHub = null; // { group, pillarNodes, allBarMeshes, record }
+let viewerControls = null;       // OrbitControls — gives orbit/zoom/pan
+let viewerHub = null;            // { group, pillarNodes, allBarMeshes, record }
 let viewerBarMeshes = [];
-let viewerRotation = { y: 0, x: 0 }; // user-controlled rotation
-let viewerDragState = null;
-let popupTarget = null; // { pIdx, lIdx }
+let viewerDragState = null;      // tracks click-vs-drag for bar-click detection
+let popupTarget = null;          // { pIdx, lIdx }
 
 // ---------- Camera state (orbit model) ----------
 // Camera orbits a target point on the grid plane. Pitch (elevation) and
@@ -76,9 +78,9 @@ let cameraDistance = 30;
 let cameraDistanceGoal = 30;
 let cameraAzimuth = 0;                                              // yaw, radians
 let cameraAzimuthGoal = 0;
-const ELEV_DEFAULT = THREE.MathUtils.degToRad(72);                  // mostly top-down
+const ELEV_DEFAULT = THREE.MathUtils.degToRad(90);                  // 100% top-down
 const ELEV_MIN = THREE.MathUtils.degToRad(15);
-const ELEV_MAX = THREE.MathUtils.degToRad(89);
+const ELEV_MAX = THREE.MathUtils.degToRad(90);
 let cameraElevation = ELEV_DEFAULT;
 let cameraElevationGoal = ELEV_DEFAULT;
 const ZOOM_MIN = 8;
@@ -438,13 +440,13 @@ function onPointerDown(e) {
     host.setPointerCapture(e.pointerId);
   } else if (mode === 'viewer') {
     if (e.button !== undefined && e.button !== 0) return;
+    // OrbitControls does the actual drag. We just track whether the pointer
+    // moved between down and up so we can distinguish click-on-bar from drag.
     viewerDragState = {
       startX: e.clientX, startY: e.clientY,
-      startRotY: viewerRotation.y,
       moved: false,
       pickedBar: pickBarAt(e.clientX, e.clientY, viewerBarMeshes, viewerCamera),
     };
-    host.setPointerCapture(e.pointerId);
   }
 }
 
@@ -480,13 +482,7 @@ function onPointerMove(e) {
     const dx = e.clientX - viewerDragState.startX;
     const dy = e.clientY - viewerDragState.startY;
     if (!viewerDragState.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) viewerDragState.moved = true;
-    if (viewerDragState.moved) {
-      // User started dragging — cancel any in-progress rotate-to-pillar animation.
-      viewerAnimState = null;
-      const factor = (Math.PI * 2) / 400;
-      viewerRotation.y = viewerDragState.startRotY + dx * factor;
-      viewerHub.group.rotation.y = viewerRotation.y;
-    }
+    // Actual orbit/zoom/pan happens inside OrbitControls.
   }
 }
 
@@ -592,18 +588,27 @@ function enterViewer(rec) {
   };
   viewerBarMeshes = built.allBarMeshes;
   viewerScene.add(built.group);
-  viewerRotation = { y: 0, x: 0 };
   built.group.rotation.y = 0;
 
   const rect = host.getBoundingClientRect();
-  viewerCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 200);
-  fitViewerHub();
+  viewerCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 500);
 
+  // OrbitControls gives drag-orbit + wheel-zoom + right-drag-pan, matching
+  // the main viz.
+  viewerControls = new OrbitControls(viewerCamera, renderer.domElement);
+  viewerControls.target.set(0, 0, 0);
+  viewerControls.enableDamping = true;
+  viewerControls.dampingFactor = 0.12;
+  viewerControls.minDistance = 4;
+  viewerControls.maxDistance = 200;
+
+  fitViewerHub();
   updateChrome();
 }
 
 function exitViewer() {
   hidePopup();
+  if (viewerControls) { viewerControls.dispose(); viewerControls = null; }
   if (viewerHub) {
     disposeGroup(viewerHub.group);
     viewerHub = null;
@@ -612,6 +617,7 @@ function exitViewer() {
   viewerScene = null;
   viewerCamera = null;
   viewerDragState = null;
+  viewerAnimState = null;
   mode = 'grid';
   updateChrome();
 }
@@ -668,6 +674,7 @@ function loop() {
     renderer.render(gridScene, gridCamera);
   } else if (mode === 'viewer' && viewerScene && viewerCamera) {
     if (viewerAnimState) stepViewerAnim();
+    if (viewerControls) viewerControls.update();
     renderer.render(viewerScene, viewerCamera);
     if (popupTarget) updatePopupPosition();
   }
@@ -678,11 +685,11 @@ function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3
 
 function rotateHubToPillar(pIdx) {
   if (!viewerHub) return;
-  // Pillars are laid out with angle = (pIdx/N)*2π - π/2 in the hub's local
-  // frame, so pillar 0 (Water) already sits at -z (toward camera = "top").
-  // To bring pillar pIdx to that position, rotate hub by -(pIdx/N)*2π.
-  const targetRotY = -(pIdx / PILLARS.length) * Math.PI * 2;
-  const current = viewerRotation.y;
+  // Pillar local angle a = (pIdx/N)*2π - π/2. With rotation.y = θ, the pillar
+  // ends up at WORLD angle (a - θ). We want WORLD angle = -π/2 (toward
+  // camera = "top of screen"), so θ = a + π/2 = (pIdx/N)*2π.
+  const targetRotY = (pIdx / PILLARS.length) * Math.PI * 2;
+  const current = viewerHub.group.rotation.y;
   // Shortest path: normalize delta into (-π, π]
   let delta = targetRotY - current;
   delta = ((delta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
@@ -698,8 +705,7 @@ function rotateHubToPillar(pIdx) {
 function stepViewerAnim() {
   const t = Math.min(1, (performance.now() - viewerAnimState.startTime) / viewerAnimState.duration);
   const e = easeInOutCubic(t);
-  viewerRotation.y = viewerAnimState.startRotY + (viewerAnimState.endRotY - viewerAnimState.startRotY) * e;
-  viewerHub.group.rotation.y = viewerRotation.y;
+  viewerHub.group.rotation.y = viewerAnimState.startRotY + (viewerAnimState.endRotY - viewerAnimState.startRotY) * e;
   if (t >= 1) viewerAnimState = null;
 }
 
@@ -710,17 +716,21 @@ function fitViewerHub() {
   const aspect = rect.width / rect.height;
   const fovY = THREE.MathUtils.degToRad(viewerCamera.fov);
   const fovX = 2 * Math.atan(Math.tan(fovY / 2) * aspect);
-  const fullR = SPOKE_END_RADIUS + LABEL_HALF_WIDTH;
+  // Use the TRUE hub radius (out to label tip) so labels don't get clipped.
+  const fullR = HUB_FULL_RADIUS;
   const distForX = fullR / Math.tan(fovX / 2);
   const distForY = fullR / Math.tan(fovY / 2);
-  const perp = Math.max(distForX, distForY) * 1.15;
-  // Mostly top-down with the same tilt as the main viz
+  const distance = Math.max(distForX, distForY) * 1.1;
+  // Mostly top-down with a small forward tilt for visual depth.
   const elev = THREE.MathUtils.degToRad(80);
-  const distance = perp / Math.sin(elev);
   viewerCamera.position.set(
     0,
     distance * Math.sin(elev),
     distance * Math.cos(elev),
   );
   viewerCamera.lookAt(0, 0, 0);
+  if (viewerControls) {
+    viewerControls.target.set(0, 0, 0);
+    viewerControls.update();
+  }
 }

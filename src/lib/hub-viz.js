@@ -4,20 +4,23 @@ import * as THREE from 'three';
 // and creation logic live here so both the main viz (one hub) and the
 // network view (many hubs) build identical-looking hubs.
 
+// `icon` is the Font Awesome 6 Free Solid unicode codepoint for the glyph
+// — used by drawIcon() to render the character into the icon canvas via
+// the loaded FA webfont.
 export const PILLARS = [
-  { n:1,  name:'Water',          metaphor:'The Bloodstream',       color:'#1a5276', icon:'', faClass:'fa-solid fa-droplet' },
-  { n:2,  name:'Food',           metaphor:'The Stomach',           color:'#196f3d', icon:'', faClass:'fa-solid fa-utensils' },
-  { n:3,  name:'Shelter',        metaphor:'The Skeleton',          color:'#784212', icon:'', faClass:'fa-solid fa-house' },
-  { n:4,  name:'Energy',         metaphor:'The Heart',             color:'#f1c40f', icon:'', faClass:'fa-solid fa-bolt' },
-  { n:5,  name:'Medicine',       metaphor:'The Immune System',     color:'#e74c3c', icon:'', faClass:'fa-solid fa-briefcase-medical' },
-  { n:6,  name:'Communication',  metaphor:'The Nervous System',    color:'#3498db', icon:'', faClass:'fa-solid fa-tower-broadcast' },
-  { n:7,  name:'Manufacturing',  metaphor:'The Hands',             color:'#e67e22', icon:'', faClass:'fa-solid fa-gears' },
-  { n:8,  name:'Security',       metaphor:'The Skin',              color:'#2ecc71', icon:'', faClass:'fa-solid fa-shield-halved' },
-  { n:9,  name:'Transportation', metaphor:'The Legs',              color:'#7f8c8d', icon:'', faClass:'fa-solid fa-truck' },
-  { n:10, name:'Trade',          metaphor:'The Circulatory System',color:'#d4af37', icon:'', faClass:'fa-solid fa-scale-balanced' },
-  { n:11, name:'Governance',     metaphor:'The Brain',             color:'#5b5ea6', icon:'', faClass:'fa-solid fa-gavel' },
-  { n:12, name:'Knowledge',      metaphor:'The Memory',            color:'#48c9b0', icon:'', faClass:'fa-solid fa-book' },
-  { n:13, name:'Culture',        metaphor:'The Soul',              color:'#9c27b0', icon:'', faClass:'fa-solid fa-masks-theater' },
+  { n:1,  name:'Water',          metaphor:'The Bloodstream',       color:'#1a5276', icon:'', faClass:'fa-solid fa-droplet' },
+  { n:2,  name:'Food',           metaphor:'The Stomach',           color:'#196f3d', icon:'', faClass:'fa-solid fa-utensils' },
+  { n:3,  name:'Shelter',        metaphor:'The Skeleton',          color:'#784212', icon:'', faClass:'fa-solid fa-house' },
+  { n:4,  name:'Energy',         metaphor:'The Heart',             color:'#f1c40f', icon:'', faClass:'fa-solid fa-bolt' },
+  { n:5,  name:'Medicine',       metaphor:'The Immune System',     color:'#e74c3c', icon:'', faClass:'fa-solid fa-briefcase-medical' },
+  { n:6,  name:'Communication',  metaphor:'The Nervous System',    color:'#3498db', icon:'', faClass:'fa-solid fa-tower-broadcast' },
+  { n:7,  name:'Manufacturing',  metaphor:'The Hands',             color:'#e67e22', icon:'', faClass:'fa-solid fa-gears' },
+  { n:8,  name:'Security',       metaphor:'The Skin',              color:'#2ecc71', icon:'', faClass:'fa-solid fa-shield-halved' },
+  { n:9,  name:'Transportation', metaphor:'The Legs',              color:'#7f8c8d', icon:'', faClass:'fa-solid fa-truck' },
+  { n:10, name:'Trade',          metaphor:'The Circulatory System',color:'#d4af37', icon:'', faClass:'fa-solid fa-scale-balanced' },
+  { n:11, name:'Governance',     metaphor:'The Brain',             color:'#5b5ea6', icon:'', faClass:'fa-solid fa-gavel' },
+  { n:12, name:'Knowledge',      metaphor:'The Memory',            color:'#48c9b0', icon:'', faClass:'fa-solid fa-book' },
+  { n:13, name:'Culture',        metaphor:'The Soul',              color:'#9c27b0', icon:'', faClass:'fa-solid fa-masks-theater' },
 ];
 
 export const LAYERS = [
@@ -342,7 +345,30 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
     img.src = url;
   }
 
+  // Remember the latest answers so the font-load callback can repaint
+  // with the right dim/lit state once the FA font is ready.
+  let lastAnswers = answers || {};
+
+  function pillarHasAnyAnswer(pIdx, ans) {
+    for (let l = 0; l < LAYERS.length; l++) {
+      const v = ans[answerKey(pIdx, l)];
+      if (v && v !== 'none') return true;
+    }
+    return false;
+  }
+
+  function updateIconForPillar(pn, hasAny) {
+    // Active pillars get white icons at full alpha; empty pillars stay
+    // visible but dimmed so you can still read the pillar but the eye is
+    // drawn to the active ones.
+    const color = hasAny ? '#ffffff' : '#5b6d82';
+    const alpha = hasAny ? 1.0 : 0.35;
+    drawIcon(pn.iconObj.ctx, pn.p.icon, color, pn.iconObj.canvas.width, alpha);
+    pn.iconObj.tex.needsUpdate = true;
+  }
+
   function paintAnswers({ answers: nextAnswers = {}, descriptions: nextDescriptions = {} } = {}) {
+    lastAnswers = nextAnswers;
     pillarNodes.forEach((pn, pIdx) => {
       pn.bars.forEach((bar, lIdx) => {
         const phase = nextAnswers[answerKey(pIdx, lIdx)] || 'none';
@@ -358,6 +384,7 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
         const desc = nextDescriptions[answerKey(pIdx, lIdx)];
         bar.commentDot.visible = !!(desc && desc.trim());
       });
+      updateIconForPillar(pn, pillarHasAnyAnswer(pIdx, nextAnswers));
     });
   }
 
@@ -366,12 +393,13 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
   setName(name);
   if (imageUrl) setImage(imageUrl);
 
-  // Trigger an icon repaint when the Font Awesome webfont finishes loading
+  // The first paint runs before the FA webfont loads, so icons render as
+  // tofu / fallback. Repaint with the same dim/lit logic when the font
+  // arrives so empty pillars stay dimmed.
   if (document.fonts && document.fonts.load) {
     document.fonts.load('900 64px "Font Awesome 6 Free"').then(() => {
-      pillarNodes.forEach((pn) => {
-        drawIcon(pn.iconObj.ctx, pn.p.icon, '#ffffff', pn.iconObj.canvas.width, 1.0);
-        pn.iconObj.tex.needsUpdate = true;
+      pillarNodes.forEach((pn, pIdx) => {
+        updateIconForPillar(pn, pillarHasAnyAnswer(pIdx, lastAnswers));
       });
     }).catch(() => {});
   }
