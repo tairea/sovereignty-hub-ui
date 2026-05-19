@@ -54,15 +54,24 @@ let viewerRotation = { y: 0, x: 0 }; // user-controlled rotation
 let viewerDragState = null;
 let popupTarget = null; // { pIdx, lIdx }
 
-// ---------- Camera scroll state ----------
-let cameraTargetZ = 0; // where camera is scrolling toward
-let cameraZ = 0;
-const CAMERA_HEIGHT = 14;
-const CAMERA_TILT_Z_OFFSET = 6; // pull camera back along z so hubs sit nicely in view
+// ---------- Camera state ----------
+// Parameterised as a target point on the grid plane (y=0) plus a "height"
+// above the plane. The camera tilts slightly toward +Z so hubs read with
+// a hint of perspective instead of dead-on top-down.
+let cameraTargetZ = 0;           // where the camera looks (smoothed)
+let cameraTargetZGoal = 0;       // where it is scrolling toward
+let cameraHeight = 30;           // current distance above grid (smoothed)
+let cameraHeightGoal = 30;       // where zoom is going
+const CAMERA_TILT_RATIO = 0.30;  // tiltOffsetZ / height
+const ZOOM_MIN = 8;
+const ZOOM_MAX = 180;
 
 // ---------- Per-hub drag state ----------
+// dragState shapes:
+//   { kind: 'rotate-hub', hubIdx, startX, startY, startRotY, moved }
+//   { kind: 'scroll-grid', startX, startY, startTargetZ, moved }
 let dragState = null;
-// { hubIdx, startX, startY, startRotY, moved }
+let pinchState = null;
 const DRAG_THRESHOLD_PX = 6;
 
 // ---------- Public API ----------
@@ -140,9 +149,11 @@ function startScene() {
   gridScene.background = null;
 
   const rect = host.getBoundingClientRect();
-  gridCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 500);
-  cameraZ = 0;
+  gridCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 1000);
   cameraTargetZ = 0;
+  cameraTargetZGoal = 0;
+  cameraHeight = 30;
+  cameraHeightGoal = 30;
   positionGridCamera();
 
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -161,8 +172,10 @@ function startScene() {
   host.addEventListener('pointerup', onPointerUp);
   host.addEventListener('pointercancel', onPointerUp);
   host.addEventListener('wheel', onWheel, { passive: false });
-  host.addEventListener('touchstart', onTouchStart, { passive: true });
+  host.addEventListener('touchstart', onTouchStart, { passive: false });
   host.addEventListener('touchmove', onTouchMove, { passive: false });
+  host.addEventListener('touchend', onTouchEnd);
+  host.addEventListener('touchcancel', onTouchEnd);
 
   loop();
 }
@@ -189,6 +202,8 @@ function stopScene() {
     host.removeEventListener('wheel', onWheel);
     host.removeEventListener('touchstart', onTouchStart);
     host.removeEventListener('touchmove', onTouchMove);
+    host.removeEventListener('touchend', onTouchEnd);
+    host.removeEventListener('touchcancel', onTouchEnd);
   }
   for (const h of hubs) disposeGroup(h.group);
   hubs = [];
@@ -222,6 +237,8 @@ function onResize() {
   }
   renderer.setSize(rect.width, rect.height);
   if (popupTarget) updatePopupPosition();
+  // On resize, re-fit so the layout adapts to orientation / window changes.
+  if (mode === 'grid') fitAllHubs();
 }
 
 // ---------- Loading hubs ----------
@@ -296,6 +313,36 @@ function buildHubs(records) {
     }
   });
   updateChrome();
+  fitAllHubs();
+}
+
+// Position the camera so every hub fits in the viewport with a little padding.
+function fitAllHubs() {
+  if (!gridCamera || hubs.length === 0) return;
+  const xs = hubs.map((h) => h.x);
+  const zs = hubs.map((h) => h.z);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+  // Each hub occupies a rough HUB_FOOTPRINT square — include those bounds,
+  // not just the centers.
+  const spreadX = (maxX - minX) + HUB_FOOTPRINT;
+  const spreadZ = (maxZ - minZ) + HUB_FOOTPRINT;
+  const centerZ = (minZ + maxZ) / 2;
+
+  const rect = host.getBoundingClientRect();
+  const aspect = rect.width / rect.height;
+  const fovY = THREE.MathUtils.degToRad(gridCamera.fov);
+  const fovX = 2 * Math.atan(Math.tan(fovY / 2) * aspect);
+  // Top-down approximation; the tilt adds a little error so multiply by
+  // 1.2 padding to absorb that plus give breathing room.
+  const hForX = (spreadX / 2) / Math.tan(fovX / 2);
+  const hForZ = (spreadZ / 2) / Math.tan(fovY / 2);
+  const h = Math.max(hForX, hForZ) * 1.2;
+
+  cameraHeight = h;
+  cameraHeightGoal = h;
+  cameraTargetZ = centerZ;
+  cameraTargetZGoal = centerZ;
 }
 
 // ---------- Interaction ----------
@@ -310,23 +357,32 @@ function pickBarAt(clientX, clientY, meshList, camForRay) {
 
 function onPointerDown(e) {
   if (e.button !== undefined && e.button !== 0) return;
+  // Pinch in progress? Don't start a one-finger drag.
+  if (pinchState) return;
   if (mode === 'grid') {
     const hit = pickBarAt(e.clientX, e.clientY, allBarMeshes, gridCamera);
-    if (!hit) { dragState = null; return; }
-    const hubIdx = hit.object.userData.hubIdx;
-    dragState = {
-      hubIdx,
-      startX: e.clientX,
-      startY: e.clientY,
-      startRotY: hubs[hubIdx].group.rotation.y,
-      moved: false,
-    };
+    if (hit) {
+      const hubIdx = hit.object.userData.hubIdx;
+      dragState = {
+        kind: 'rotate-hub',
+        hubIdx,
+        startX: e.clientX, startY: e.clientY,
+        startRotY: hubs[hubIdx].group.rotation.y,
+        moved: false,
+      };
+    } else {
+      // Empty space → pan/scroll the grid.
+      dragState = {
+        kind: 'scroll-grid',
+        startX: e.clientX, startY: e.clientY,
+        startTargetZ: cameraTargetZGoal,
+        moved: false,
+      };
+    }
     host.setPointerCapture(e.pointerId);
   } else if (mode === 'viewer') {
-    // In viewer: any pointerdown on canvas starts a rotation-or-click gesture.
     viewerDragState = {
-      startX: e.clientX,
-      startY: e.clientY,
+      startX: e.clientX, startY: e.clientY,
       startRotY: viewerRotation.y,
       moved: false,
       pickedBar: pickBarAt(e.clientX, e.clientY, viewerBarMeshes, viewerCamera),
@@ -340,9 +396,17 @@ function onPointerMove(e) {
     const dx = e.clientX - dragState.startX;
     const dy = e.clientY - dragState.startY;
     if (!dragState.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) dragState.moved = true;
-    if (dragState.moved) {
+    if (!dragState.moved) return;
+    if (dragState.kind === 'rotate-hub') {
       const factor = (Math.PI * 2) / 400;
       hubs[dragState.hubIdx].group.rotation.y = dragState.startRotY + dx * factor;
+    } else if (dragState.kind === 'scroll-grid') {
+      // Convert px → world units based on current camera height + FOV so
+      // the grid pans 1:1 with the cursor regardless of zoom.
+      const fovY = THREE.MathUtils.degToRad(gridCamera.fov);
+      const worldPerPx = (2 * cameraHeight * Math.tan(fovY / 2)) / host.clientHeight;
+      cameraTargetZGoal = dragState.startTargetZ - dy * worldPerPx;
+      clampCameraTarget();
     }
   } else if (mode === 'viewer' && viewerDragState) {
     const dx = e.clientX - viewerDragState.startX;
@@ -359,7 +423,7 @@ function onPointerMove(e) {
 function onPointerUp(e) {
   try { host.releasePointerCapture(e.pointerId); } catch (_) {}
   if (mode === 'grid' && dragState) {
-    const wasClick = !dragState.moved;
+    const wasClick = !dragState.moved && dragState.kind === 'rotate-hub';
     const clickedHubIdx = dragState.hubIdx;
     dragState = null;
     if (wasClick) {
@@ -381,37 +445,56 @@ function onPointerUp(e) {
 
 function onWheel(e) {
   e.preventDefault();
-  // Scroll camera in +Z (further down the grid). Mouse wheel up = move up the grid.
-  cameraTargetZ += e.deltaY * 0.04;
-  clampCameraTarget();
+  if (mode !== 'grid') return;
+  // wheel-up (negative deltaY) zooms in (smaller height).
+  // 1.0015^120 ≈ 1.2 per notch — feels about right.
+  const factor = Math.pow(1.0015, e.deltaY);
+  cameraHeightGoal = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cameraHeightGoal * factor));
 }
 
-let touchScrollState = null;
-function onTouchStart(e) {
-  // If a hub-drag is already happening (pointerdown captured), let it handle.
-  if (dragState) return;
-  if (e.touches.length !== 1) return;
-  touchScrollState = { y: e.touches[0].clientY, startZ: cameraTargetZ };
+function touchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
 }
+
+function onTouchStart(e) {
+  if (e.touches.length === 2 && mode === 'grid') {
+    // Two-finger pinch: cancel any in-progress one-finger drag.
+    dragState = null;
+    pinchState = {
+      startDistance: touchDistance(e.touches),
+      startHeight: cameraHeightGoal,
+    };
+  }
+}
+
 function onTouchMove(e) {
-  // Only handle scroll when we're NOT in a hub-drag gesture.
-  if (dragState || !touchScrollState || e.touches.length !== 1) return;
-  e.preventDefault();
-  const dy = e.touches[0].clientY - touchScrollState.y;
-  cameraTargetZ = touchScrollState.startZ - dy * 0.04;
-  clampCameraTarget();
+  if (pinchState && e.touches.length === 2 && mode === 'grid') {
+    e.preventDefault();
+    const d = touchDistance(e.touches);
+    if (d > 0 && pinchState.startDistance > 0) {
+      const factor = pinchState.startDistance / d;
+      cameraHeightGoal = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchState.startHeight * factor));
+    }
+  }
+}
+
+function onTouchEnd(e) {
+  if (e.touches.length < 2) pinchState = null;
 }
 
 function clampCameraTarget() {
-  if (hubs.length === 0) { cameraTargetZ = 0; return; }
-  const maxRowZ = hubs[hubs.length - 1].z;
-  cameraTargetZ = Math.max(0, Math.min(maxRowZ, cameraTargetZ));
+  if (hubs.length === 0) { cameraTargetZGoal = 0; return; }
+  const minZ = hubs[0].z - HUB_FOOTPRINT;
+  const maxZ = hubs[hubs.length - 1].z + HUB_FOOTPRINT;
+  cameraTargetZGoal = Math.max(minZ, Math.min(maxZ, cameraTargetZGoal));
 }
 
 function positionGridCamera() {
   if (!gridCamera) return;
-  gridCamera.position.set(0, CAMERA_HEIGHT, cameraZ + CAMERA_TILT_Z_OFFSET);
-  gridCamera.lookAt(0, 0, cameraZ);
+  gridCamera.position.set(0, cameraHeight, cameraTargetZ + cameraHeight * CAMERA_TILT_RATIO);
+  gridCamera.lookAt(0, 0, cameraTargetZ);
 }
 
 // ---------- Viewer mode (single hub fullscreen) ----------
@@ -507,7 +590,8 @@ function updatePopupPosition() {
 function loop() {
   if (!renderer) return;
   if (mode === 'grid') {
-    cameraZ += (cameraTargetZ - cameraZ) * 0.18;
+    cameraTargetZ += (cameraTargetZGoal - cameraTargetZ) * 0.18;
+    cameraHeight += (cameraHeightGoal - cameraHeight) * 0.2;
     positionGridCamera();
     renderer.render(gridScene, gridCamera);
   } else if (mode === 'viewer' && viewerScene && viewerCamera) {
