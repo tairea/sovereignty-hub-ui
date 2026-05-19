@@ -1085,6 +1085,10 @@ class CircleCropper {
     return new Promise((resolve, reject) => {
       if (!dataUrl) { this.reset(); resolve(); return; }
       const img = new Image();
+      // Once the avatar is uploaded it lives at an https Storage URL.
+      // Without crossOrigin the cropper canvas gets tainted on draw and
+      // exportDataUrl() later throws SecurityError. Data URLs ignore this.
+      img.crossOrigin = 'anonymous';
       img.onload = () => { this.loadImageElement(img); resolve(); };
       img.onerror = reject;
       img.src = dataUrl;
