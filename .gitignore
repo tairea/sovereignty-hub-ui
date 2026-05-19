@@ -16,3 +16,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI cache (linked project ref, version strings, pooler URL)
+supabase/.temp

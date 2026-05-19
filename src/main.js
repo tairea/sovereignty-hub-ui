@@ -1491,8 +1491,13 @@ const endResize = (e) => {
   if (panelHeight < COLLAPSE_THRESHOLD_PX) {
     setPanelCollapsed(true);
   } else {
-    setPanelCollapsed(false);
+    // Drag ended at a valid size — pointermove already set --mobile-viz-h
+    // to the new value, so just persist it. Don't go through
+    // setPanelCollapsed(false): that re-reads VIZ_H_KEY and would snap
+    // us back to the previously saved height.
+    localStorage.removeItem(PANEL_COLLAPSED_KEY);
     localStorage.setItem(VIZ_H_KEY, vizEl.clientHeight + 'px');
+    resize();
   }
 };
 resizeHandle.addEventListener('pointerup', endResize);
