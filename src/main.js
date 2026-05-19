@@ -231,7 +231,17 @@ function makeLabelSprite(text, color = '#e6edf3', size = 256) {
   canvas.height = size / 2;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.font = 'bold 64px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif';
+  const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif';
+  // Fit the text inside ~92% of canvas width. Long names like
+  // "6. Communication" or "9. Transportation" otherwise clip at both ends.
+  const maxWidth = canvas.width * 0.92;
+  let fontSize = 64;
+  ctx.font = `bold ${fontSize}px ${fontFamily}`;
+  let measured = ctx.measureText(text).width;
+  if (measured > maxWidth) {
+    fontSize = Math.max(36, Math.floor(fontSize * (maxWidth / measured)));
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+  }
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -734,37 +744,25 @@ function updatePopupPosition() {
   const pn = pillarNodes[popupTarget.pIdx];
   const bar = pn.bars[popupTarget.lIdx];
   bar.group.updateMatrixWorld(true);
-  // Anchor at the OUTER edge of the bar (local +x = radially outward) rather
-  // than its center, so the popup naturally sits beyond the branch.
+  // Anchor at the OUTER edge of the bar (local +x = radially outward).
+  // The popup always sits to the right of this anchor in screen space,
+  // vertically centered with the bar — independent of how the scene
+  // is rotated.
   const centerWorld = new THREE.Vector3().setFromMatrixPosition(bar.group.matrixWorld);
   const outerWorld = new THREE.Vector3(LAYER_LEN / 2, 0, 0).applyMatrix4(bar.group.matrixWorld);
   const ndcCenter = centerWorld.clone().project(camera);
   const ndcOuter = outerWorld.clone().project(camera);
   const rect = renderer.domElement.getBoundingClientRect();
-  const cx = (ndcCenter.x * 0.5 + 0.5) * rect.width;
-  const cy = (1 - (ndcCenter.y * 0.5 + 0.5)) * rect.height;
+  // Horizontal: just past the bar's outer edge.
+  // Vertical: use the bar's CENTER projection. The outer-edge point
+  // projects to a slightly different screen y because of the camera tilt,
+  // which made the popup look misaligned with the bar.
   const ox = (ndcOuter.x * 0.5 + 0.5) * rect.width;
-  const oy = (1 - (ndcOuter.y * 0.5 + 0.5)) * rect.height;
-  // unit vector from center to outer = radial direction in screen space
-  const dx = ox - cx;
-  const dy = oy - cy;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  // push 24px further out from the outer edge, so the popup edge sits clear of the branch
-  const MARGIN = 24;
-  const x = ox + ux * MARGIN;
-  const y = oy + uy * MARGIN;
-  // Place popup so its edge nearest the bar (opposite of the radial direction)
-  // sits at (x, y). Map the unit direction to translateX/Y percentages:
-  //   ux = +1 → tx = 0%   (popup extends right of anchor)
-  //   ux = -1 → tx = -100% (popup extends left of anchor)
-  //   ux = 0  → tx = -50%  (centered)
-  const tx = (-50 + 50 * ux).toFixed(1);
-  const ty = (-50 + 50 * uy).toFixed(1);
-  vizPopup.style.left = `${x}px`;
-  vizPopup.style.top = `${y}px`;
-  vizPopup.style.transform = `translate(${tx}%, ${ty}%)`;
+  const cy = (1 - (ndcCenter.y * 0.5 + 0.5)) * rect.height;
+  const MARGIN = 36;
+  vizPopup.style.left = `${ox + MARGIN}px`;
+  vizPopup.style.top = `${cy}px`;
+  vizPopup.style.transform = 'translate(0, -50%)';
   vizPopup.style.opacity = (ndcCenter.z > 1) ? '0' : '1';
 }
 
