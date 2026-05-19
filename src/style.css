@@ -193,7 +193,7 @@
   @media (max-width: 900px) {
     #unsaved-chip {
       position: fixed;
-      top: calc(var(--mobile-viz-h) - 26px);
+      top: calc(var(--mobile-viz-h) - 34px);
       right: 52px;
       bottom: auto;
       z-index: 31;

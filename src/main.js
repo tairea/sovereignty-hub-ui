@@ -7,6 +7,12 @@ import {
   signInWithEmail,
   signOut,
 } from './lib/auth.js';
+import {
+  loadRemoteState,
+  saveRemoteState,
+  saveProfile,
+  flushPending as flushRemote,
+} from './lib/db.js';
 
 // ----- Data -----
 const PILLARS = [
@@ -124,6 +130,8 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ answers, descriptions, hub, cursor, maxReached }));
   // Reflect "has unsaved progress" state in the auth UI (chip visibility, etc.)
   if (typeof refreshAuthUI === 'function') refreshAuthUI();
+  // Mirror survey state to Supabase when signed in. Debounced inside db.js.
+  saveRemoteState({ answers, descriptions, cursor, maxReached });
 }
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1287,13 +1295,61 @@ function refreshAuthUI() {
   }
 }
 
+// Track which user we've already hydrated from the server, so the subscribe
+// callback (which fires on every state change) only syncs once per sign-in.
+let syncedUserId = null;
+
+async function hydrateFromRemote() {
+  const remote = await loadRemoteState();
+  if (!remote) return;
+
+  const localHasAnswers = answers && Object.keys(answers).length > 0;
+  const remoteHasAnswers = Object.keys(remote.answers || {}).length > 0;
+
+  if (!remoteHasAnswers && localHasAnswers) {
+    // First sign-in with pre-existing local progress: push it up so the
+    // user doesn't lose what they did while signed-out.
+    saveRemoteState({ answers, descriptions, cursor, maxReached });
+    await saveProfile(hub).then((res) => {
+      if (res?.ok && res.imageDataUrl) {
+        hub.imageDataUrl = res.imageDataUrl;
+        saveState();
+      }
+    });
+  } else {
+    // Remote wins: adopt the server snapshot.
+    answers      = remote.answers;
+    descriptions = remote.descriptions;
+    cursor       = remote.cursor;
+    maxReached   = remote.maxReached;
+    hub          = remote.hub;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ answers, descriptions, hub, cursor, maxReached }));
+  }
+  updateViz();
+  updateHubDisplay();
+  updateProgress();
+  renderQuestion();
+  refreshAuthUI();
+}
+
 subscribeAuth((state) => {
   refreshAuthUI();
   // If a magic link just landed and the auth modal is open, close it
   if (state.status === 'signed-in' && authModal && !authModal.hidden) {
     closeAuthModal();
   }
+  // One-shot hydrate per signed-in user
+  if (state.status === 'signed-in' && state.user?.id && state.user.id !== syncedUserId) {
+    syncedUserId = state.user.id;
+    hydrateFromRemote().catch((e) => console.error('[main] hydrate failed', e));
+  }
+  if (state.status === 'signed-out') {
+    syncedUserId = null;
+  }
 });
+
+// Flush pending survey writes before the tab goes away.
+window.addEventListener('beforeunload', () => { flushRemote(); });
 
 hubImageInput.addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
@@ -1320,7 +1376,7 @@ cropperZoom.addEventListener('input', () => {
   cropper.setZoom(parseFloat(cropperZoom.value));
 });
 
-hubSaveBtn.addEventListener('click', () => {
+hubSaveBtn.addEventListener('click', async () => {
   hub.name = hubNameInput.value.trim();
   hub.email = hubEmailInput.value.trim();
   hub.link = hubLinkInput.value.trim();
@@ -1328,6 +1384,17 @@ hubSaveBtn.addEventListener('click', () => {
   saveState();
   updateHubDisplay();
   closeHubModal();
+  // Push to Supabase if signed in. Avatar (if any) gets uploaded to Storage
+  // and imageDataUrl is rewritten to the public URL so we don't re-upload
+  // on every subsequent save.
+  if (authState.status === 'signed-in') {
+    const res = await saveProfile(hub);
+    if (res?.ok && res.imageDataUrl && res.imageDataUrl !== hub.imageDataUrl) {
+      hub.imageDataUrl = res.imageDataUrl;
+      saveState();
+      updateHubDisplay();
+    }
+  }
 });
 
 document.addEventListener('keydown', (e) => {

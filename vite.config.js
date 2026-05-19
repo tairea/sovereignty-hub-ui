@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => ({
   base: mode === 'production' ? '/sovereignty-hub-ui/' : '/',
   server: {
     port: 5173,
+    strictPort: true,    // fail loudly instead of silently picking 5174 — keeps Supabase magic-link redirects pointed at one origin
     host: true,
   },
   build: {
