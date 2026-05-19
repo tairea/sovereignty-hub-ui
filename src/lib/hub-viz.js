@@ -272,8 +272,24 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
       commentDot.renderOrder = 5;
       barGroup.add(commentDot);
 
+      // Neon-blue glow halo behind the comment dot — shown when this
+      // layer has at least one chat reply.
+      const commentGlowGeo = new THREE.SphereGeometry(0.20, 18, 12);
+      const commentGlowMat = new THREE.MeshBasicMaterial({
+        color: 0x00e5ff,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const commentGlow = new THREE.Mesh(commentGlowGeo, commentGlowMat);
+      commentGlow.position.copy(commentDot.position);
+      commentGlow.visible = false;
+      commentGlow.renderOrder = 4;
+      barGroup.add(commentGlow);
+
       spoke.add(barGroup);
-      bars.push({ group: barGroup, segs, xCenter, commentDot });
+      bars.push({ group: barGroup, segs, xCenter, commentDot, commentGlow });
     }
 
     // Icon sprite floating just above the node disc
@@ -348,6 +364,9 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
   // Remember the latest answers so the font-load callback can repaint
   // with the right dim/lit state once the FA font is ready.
   let lastAnswers = answers || {};
+  // Same idea for chat counts — paintAnswers re-applies glow visibility
+  // so the dot toggling on/off also re-evaluates the halo.
+  let lastChatCounts = {};
 
   function pillarHasAnyAnswer(pIdx, ans) {
     for (let l = 0; l < LAYERS.length; l++) {
@@ -404,6 +423,23 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
       updateIconForPillar(pn, hasAny);
       updateNodeForPillar(pn, hasAny);
     });
+    applyChatGlow();
+  }
+
+  function applyChatGlow() {
+    pillarNodes.forEach((pn, pIdx) => {
+      pn.bars.forEach((bar, lIdx) => {
+        const has = !!lastChatCounts[answerKey(pIdx, lIdx)];
+        // Glow only shows when the comment dot is also visible — chat
+        // lives on top of an existing description.
+        bar.commentGlow.visible = has && bar.commentDot.visible;
+      });
+    });
+  }
+
+  function setLayerChatCounts(countsByKey = {}) {
+    lastChatCounts = countsByKey || {};
+    applyChatGlow();
   }
 
   // Initial paint
@@ -427,6 +463,7 @@ export function createHub({ answers = {}, descriptions = {}, name = '', imageUrl
     pillarNodes,
     allBarMeshes,
     paintAnswers,
+    setLayerChatCounts,
     hub: { setName, setImage, refreshBadge },
   };
 }

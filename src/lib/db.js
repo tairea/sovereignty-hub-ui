@@ -129,3 +129,56 @@ export async function saveProfile(hub) {
   }
   return { ok: true, imageDataUrl: imageUrl };
 }
+
+/**
+ * Fetch every chat for a hub owner across all layers. profiles and
+ * auth.users aren't joinable via PostgREST and there's no FK between
+ * layer_chats.author_id and profiles.id (both reference auth.users),
+ * so do two queries and merge in author display names.
+ */
+export async function loadChatsForHub(hubOwnerId) {
+  if (!supabase || !hubOwnerId) return [];
+  const { data: chats, error } = await supabase
+    .from('layer_chats')
+    .select('id, hub_owner_id, pillar_idx, layer_idx, author_id, body, created_at')
+    .eq('hub_owner_id', hubOwnerId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('[db] chats load failed', error); return []; }
+  if (!chats || chats.length === 0) return [];
+  const authorIds = [...new Set(chats.map((c) => c.author_id))];
+  const { data: authors, error: authorsErr } = await supabase
+    .from('profiles')
+    .select('id, hub_name')
+    .in('id', authorIds);
+  if (authorsErr) console.error('[db] chat authors load failed', authorsErr);
+  const nameById = new Map((authors || []).map((p) => [p.id, p.hub_name || '']));
+  return chats.map((c) => ({ ...c, author_hub_name: nameById.get(c.author_id) || '' }));
+}
+
+export async function postChat({ hubOwnerId, pIdx, lIdx, body }) {
+  if (!supabase) return { error: 'Supabase not configured' };
+  const uid = userId();
+  if (!uid) return { error: 'Not signed in' };
+  const trimmed = (body || '').trim();
+  if (!trimmed) return { error: 'Empty message' };
+  const { data, error } = await supabase
+    .from('layer_chats')
+    .insert({
+      hub_owner_id: hubOwnerId,
+      pillar_idx:   pIdx,
+      layer_idx:    lIdx,
+      author_id:    uid,
+      body:         trimmed.slice(0, 2000),
+    })
+    .select('id, hub_owner_id, pillar_idx, layer_idx, author_id, body, created_at')
+    .single();
+  if (error) { console.error('[db] chat insert failed', error); return { error: error.message }; }
+  return { ok: true, chat: data };
+}
+
+export async function deleteChat(id) {
+  if (!supabase) return { error: 'Supabase not configured' };
+  const { error } = await supabase.from('layer_chats').delete().eq('id', id);
+  if (error) { console.error('[db] chat delete failed', error); return { error: error.message }; }
+  return { ok: true };
+}

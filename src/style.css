@@ -661,6 +661,96 @@
     max-height: 180px;
     overflow-y: auto;
   }
+  /* ---------- Per-layer chat (inside the viewer popup) ---------- */
+  .vp-chat {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .vp-chat-meta {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+  }
+  .vp-chat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .vp-chat-list:empty { display: none; }
+  .vp-chat-msg {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    position: relative;
+  }
+  .vp-chat-msg-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  .vp-chat-msg-author { font-weight: 600; color: var(--text); }
+  .vp-chat-msg-body {
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .vp-chat-msg-delete {
+    position: absolute;
+    top: 2px; right: 4px;
+    background: transparent; border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .vp-chat-msg-delete:hover { color: var(--text); }
+  .vp-chat-form {
+    display: flex;
+    gap: 6px;
+  }
+  .vp-chat-input {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: var(--text);
+    font-size: 12px;
+    min-width: 0;
+  }
+  .vp-chat-input:focus { outline: none; border-color: #00e5ff; }
+  .vp-chat-send {
+    background: #00e5ff;
+    color: #000;
+    border: 0;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .vp-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .vp-chat-signin {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+  .vp-chat-signin:hover { color: var(--text); }
   .summary-cell {
     aspect-ratio: 1;
     border-radius: 2px;

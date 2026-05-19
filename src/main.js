@@ -1029,6 +1029,8 @@ const hubSignOutBtn = document.getElementById('hub-sign-out');
 const profileBtn = document.getElementById('profile-toggle');
 const networkBtn = document.getElementById('network-toggle');
 networkBtn.addEventListener('click', () => { networkView.open(); });
+// Network view's chat fallback emits this when a signed-out user clicks "Sign in to leave a reply".
+document.addEventListener('request-signin', () => openAuthModal());
 const unsavedChip = document.getElementById('unsaved-chip');
 const authModal = document.getElementById('auth-modal');
 const authEmailInput = document.getElementById('auth-email-input');

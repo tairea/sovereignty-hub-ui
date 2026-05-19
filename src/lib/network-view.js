@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { supabase } from './supabase.js';
+import { authState } from './auth.js';
+import { loadChatsForHub, postChat, deleteChat } from './db.js';
 import {
   createHub,
   RING_RADIUS, NODE_LEN, NODE_GAP, LAYER_LEN, LAYER_GAP,
@@ -39,6 +41,12 @@ let popupEl = null;
 let popupIconEl = null;
 let popupTitleEl = null;
 let popupBodyEl = null;
+let chatMetaEl = null;
+let chatListEl = null;
+let chatFormEl = null;
+let chatInputEl = null;
+let chatSendEl = null;
+let chatSigninEl = null;
 
 // ---------- THREE.js state (recreated each open / disposed on close) ----------
 let renderer = null;
@@ -66,7 +74,9 @@ let viewerControls = null;       // OrbitControls — gives orbit/zoom/pan
 let viewerHub = null;            // { group, pillarNodes, allBarMeshes, record }
 let viewerBarMeshes = [];
 let viewerDragState = null;      // tracks click-vs-drag for bar-click detection
+let viewerHubFactory = null;     // return value of createHub() — for setLayerChatCounts
 let popupTarget = null;          // { pIdx, lIdx }
+let chatsByLayer = {};           // answerKey → [chat, ...] oldest first
 
 // ---------- Camera state (orbit model) ----------
 // Camera orbits a target point on the grid plane. Pitch (elevation) and
@@ -138,9 +148,20 @@ function ensureDom() {
   popupIconEl = popupEl.querySelector('.vp-icon');
   popupTitleEl = popupEl.querySelector('.vp-title');
   popupBodyEl = popupEl.querySelector('.vp-body');
+  chatMetaEl = popupEl.querySelector('.vp-chat-meta');
+  chatListEl = popupEl.querySelector('.vp-chat-list');
+  chatFormEl = popupEl.querySelector('.vp-chat-form');
+  chatInputEl = popupEl.querySelector('.vp-chat-input');
+  chatSendEl = popupEl.querySelector('.vp-chat-send');
+  chatSigninEl = popupEl.querySelector('.vp-chat-signin');
 
   closeBtn.addEventListener('click', onBack);
   popupEl.querySelector('.vp-close').addEventListener('click', hidePopup);
+  chatFormEl.addEventListener('submit', onChatSubmit);
+  chatListEl.addEventListener('click', onChatListClick);
+  chatSigninEl.addEventListener('click', () => {
+    document.dispatchEvent(new CustomEvent('request-signin'));
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && isOpen()) onBack();
@@ -587,8 +608,22 @@ function enterViewer(rec) {
     descriptions: survey.descriptions || {},
   };
   viewerBarMeshes = built.allBarMeshes;
+  viewerHubFactory = built;
   viewerScene.add(built.group);
   built.group.rotation.y = 0;
+
+  // Fetch all chats for this hub in one go, group by layer, then ask
+  // the factory to light up glow halos. If a popup is already open by
+  // the time chats arrive, re-render it so its replies appear too.
+  chatsByLayer = {};
+  loadChatsForHub(rec.id).then((chats) => {
+    for (const c of chats) {
+      const key = answerKey(c.pillar_idx, c.layer_idx);
+      (chatsByLayer[key] ??= []).push(c);
+    }
+    if (viewerHubFactory) viewerHubFactory.setLayerChatCounts(countsFromChatsByLayer());
+    if (popupTarget) renderPopupContent();
+  });
 
   const rect = host.getBoundingClientRect();
   viewerCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 500);
@@ -614,6 +649,8 @@ function exitViewer() {
     viewerHub = null;
     viewerBarMeshes = [];
   }
+  viewerHubFactory = null;
+  chatsByLayer = {};
   viewerScene = null;
   viewerCamera = null;
   viewerDragState = null;
@@ -626,15 +663,125 @@ function exitViewer() {
 function showPopupForLayer(pIdx, lIdx) {
   const desc = viewerHub?.descriptions?.[answerKey(pIdx, lIdx)];
   if (!desc || !desc.trim()) { hidePopup(); return; }
+  popupTarget = { pIdx, lIdx };
+  popupEl.hidden = false;
+  renderPopupContent();
+  updatePopupPosition();
+}
+
+function renderPopupContent() {
+  if (!popupTarget || !viewerHub) return;
+  const { pIdx, lIdx } = popupTarget;
   const pillar = PILLARS[pIdx];
   const layer = LAYERS[lIdx];
+  const desc = viewerHub.descriptions?.[answerKey(pIdx, lIdx)] || '';
   popupIconEl.className = `vp-icon ${pillar.faClass}`;
   popupIconEl.style.color = pillar.color;
   popupTitleEl.textContent = `${pillar.name} · ${layer.name}`;
   popupBodyEl.textContent = desc;
-  popupTarget = { pIdx, lIdx };
-  popupEl.hidden = false;
-  updatePopupPosition();
+  renderChatSection(pIdx, lIdx);
+}
+
+function renderChatSection(pIdx, lIdx) {
+  const key = answerKey(pIdx, lIdx);
+  const chats = chatsByLayer[key] || [];
+  const signedIn = authState.status === 'signed-in';
+  const myId = authState.user?.id || null;
+
+  chatMetaEl.textContent = chats.length
+    ? `${chats.length} ${chats.length === 1 ? 'reply' : 'replies'}`
+    : 'No replies yet';
+
+  chatListEl.innerHTML = chats.map((c) => `
+    <div class="vp-chat-msg" data-id="${escapeHtml(c.id)}">
+      <div class="vp-chat-msg-head">
+        <span class="vp-chat-msg-author">${escapeHtml(c.author_hub_name || 'Hub')}</span>
+        <span>${escapeHtml(relativeTime(c.created_at))}</span>
+      </div>
+      <div class="vp-chat-msg-body">${escapeHtml(c.body)}</div>
+      ${c.author_id === myId ? '<button class="vp-chat-msg-delete" type="button" title="Delete">×</button>' : ''}
+    </div>
+  `).join('');
+
+  chatFormEl.hidden = !signedIn;
+  chatSigninEl.hidden = signedIn;
+  chatSendEl.disabled = false;
+
+  // Auto-scroll to newest
+  chatListEl.scrollTop = chatListEl.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function relativeTime(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffSec = Math.max(0, (Date.now() - then) / 1000);
+  if (diffSec < 45)        return 'just now';
+  if (diffSec < 90)        return '1 min ago';
+  if (diffSec < 3600)      return `${Math.round(diffSec / 60)} min ago`;
+  if (diffSec < 5400)      return '1 hr ago';
+  if (diffSec < 86400)     return `${Math.round(diffSec / 3600)} hr ago`;
+  if (diffSec < 86400 * 7) return `${Math.round(diffSec / 86400)} d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function countsFromChatsByLayer() {
+  const out = {};
+  for (const k of Object.keys(chatsByLayer)) {
+    if (chatsByLayer[k].length) out[k] = chatsByLayer[k].length;
+  }
+  return out;
+}
+
+async function onChatSubmit(e) {
+  e.preventDefault();
+  if (!popupTarget || !viewerHub) return;
+  const body = chatInputEl.value;
+  if (!body.trim()) return;
+  chatSendEl.disabled = true;
+  const { pIdx, lIdx } = popupTarget;
+  const res = await postChat({
+    hubOwnerId: viewerHub.record.id,
+    pIdx, lIdx,
+    body,
+  });
+  chatSendEl.disabled = false;
+  if (res.error) return;
+  // Optimistic insert — tag with our own hub_name so the row shows the
+  // same display name we'd see if we re-fetched.
+  const enriched = { ...res.chat, author_hub_name: ownHubName() };
+  const key = answerKey(pIdx, lIdx);
+  (chatsByLayer[key] ??= []).push(enriched);
+  if (viewerHubFactory) viewerHubFactory.setLayerChatCounts(countsFromChatsByLayer());
+  renderChatSection(pIdx, lIdx);
+  chatInputEl.value = '';
+}
+
+async function onChatListClick(e) {
+  const btn = e.target.closest('.vp-chat-msg-delete');
+  if (!btn) return;
+  const msgEl = btn.closest('.vp-chat-msg');
+  const id = msgEl?.dataset.id;
+  if (!id || !popupTarget) return;
+  const res = await deleteChat(id);
+  if (res.error) return;
+  const { pIdx, lIdx } = popupTarget;
+  const key = answerKey(pIdx, lIdx);
+  chatsByLayer[key] = (chatsByLayer[key] || []).filter((c) => c.id !== id);
+  if (viewerHubFactory) viewerHubFactory.setLayerChatCounts(countsFromChatsByLayer());
+  renderChatSection(pIdx, lIdx);
+}
+
+function ownHubName() {
+  // Best-effort display name for our own freshly-posted reply. The next
+  // viewer open will refetch and get the canonical name from profiles.
+  return authState.user?.user_metadata?.hub_name
+      || authState.user?.email
+      || 'You';
 }
 
 function hidePopup() {

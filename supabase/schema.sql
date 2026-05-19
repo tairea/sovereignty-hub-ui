@@ -138,3 +138,44 @@ create policy "hub_avatars_owner_delete"
     bucket_id = 'hub-avatars'
     and (storage.foldername(name))[1] = (select auth.uid()::text)
   );
+
+-- =====================================================================
+-- layer_chats — per-(hub × pillar × layer) chat thread
+-- Anyone can read; signed-in users can post their own; authors can
+-- edit/delete their own messages.
+-- =====================================================================
+create table if not exists public.layer_chats (
+  id            uuid primary key default gen_random_uuid(),
+  hub_owner_id  uuid not null references auth.users(id) on delete cascade,
+  pillar_idx    smallint not null check (pillar_idx between 0 and 12),
+  layer_idx     smallint not null check (layer_idx between 0 and 6),
+  author_id     uuid not null references auth.users(id) on delete cascade,
+  body          text not null check (char_length(body) between 1 and 2000),
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists layer_chats_lookup
+  on public.layer_chats (hub_owner_id, pillar_idx, layer_idx, created_at);
+
+alter table public.layer_chats enable row level security;
+
+drop policy if exists "layer_chats_select_public" on public.layer_chats;
+create policy "layer_chats_select_public"
+  on public.layer_chats for select
+  using (true);
+
+drop policy if exists "layer_chats_insert_own" on public.layer_chats;
+create policy "layer_chats_insert_own"
+  on public.layer_chats for insert
+  with check ((select auth.uid()) = author_id);
+
+drop policy if exists "layer_chats_update_own" on public.layer_chats;
+create policy "layer_chats_update_own"
+  on public.layer_chats for update
+  using ((select auth.uid()) = author_id)
+  with check ((select auth.uid()) = author_id);
+
+drop policy if exists "layer_chats_delete_own" on public.layer_chats;
+create policy "layer_chats_delete_own"
+  on public.layer_chats for delete
+  using ((select auth.uid()) = author_id);
