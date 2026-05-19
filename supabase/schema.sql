@@ -16,12 +16,14 @@ create table if not exists public.profiles (
 
 alter table public.profiles enable row level security;
 
--- Wrap auth.uid() in (select ...) so Postgres evaluates it once per query
--- instead of once per row (db-linter rule auth_rls_initplan).
+-- SELECT is public so the network view can show every hub in the directory.
+-- Writes stay own-row only. Wrap auth.uid() in (select ...) so Postgres
+-- evaluates it once per query, not once per row (db-linter auth_rls_initplan).
 drop policy if exists "profiles_select_own" on public.profiles;
-create policy "profiles_select_own"
+drop policy if exists "profiles_select_public" on public.profiles;
+create policy "profiles_select_public"
   on public.profiles for select
-  using ((select auth.uid()) = id);
+  using (true);
 
 drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own"
@@ -49,9 +51,10 @@ create table if not exists public.survey_state (
 alter table public.survey_state enable row level security;
 
 drop policy if exists "survey_state_select_own" on public.survey_state;
-create policy "survey_state_select_own"
+drop policy if exists "survey_state_select_public" on public.survey_state;
+create policy "survey_state_select_public"
   on public.survey_state for select
-  using ((select auth.uid()) = user_id);
+  using (true);
 
 drop policy if exists "survey_state_insert_own" on public.survey_state;
 create policy "survey_state_insert_own"
