@@ -14,6 +14,7 @@ import {
   flushPending as flushRemote,
 } from './lib/db.js';
 import { SURVEY_CONTENT } from './lib/survey-content/index.js';
+import * as networkView from './lib/network-view.js';
 
 // ----- Data -----
 const PILLARS = [
@@ -1021,6 +1022,8 @@ const hubSignedInRow = document.getElementById('hub-signed-in-row');
 const hubSignedInEmail = document.getElementById('hub-signed-in-email');
 const hubSignOutBtn = document.getElementById('hub-sign-out');
 const profileBtn = document.getElementById('profile-toggle');
+const networkBtn = document.getElementById('network-toggle');
+networkBtn.addEventListener('click', () => { networkView.open(); });
 const unsavedChip = document.getElementById('unsaved-chip');
 const authModal = document.getElementById('auth-modal');
 const authEmailInput = document.getElementById('auth-email-input');

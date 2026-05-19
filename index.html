@@ -55,6 +55,9 @@
       <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
       <span>unsaved · sign in</span>
     </button>
+    <button id="network-toggle" type="button" title="See all hubs in the network">
+      <i class="fa-solid fa-globe" aria-hidden="true"></i>
+    </button>
     <button id="profile-toggle" type="button" title="Sovereignty Hub Details">
       <i class="fa-solid fa-user" aria-hidden="true"></i>
     </button>
@@ -66,6 +69,27 @@
       </div>
       <div class="vp-body"></div>
     </div>
+  </div>
+</div>
+
+<div id="network-overlay" hidden>
+  <div id="network-canvas-host"></div>
+  <div id="network-header">
+    <span id="network-title">All Hubs</span>
+    <span id="network-count"></span>
+  </div>
+  <button id="network-close" type="button" title="Back">
+    <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+  </button>
+  <div id="network-loading" hidden>Loading hubs…</div>
+  <div id="network-empty" hidden>No hubs to show yet.</div>
+  <div id="network-viewer-popup" class="viz-popup" hidden>
+    <div class="vp-header">
+      <i class="vp-icon" aria-hidden="true"></i>
+      <span class="vp-title"></span>
+      <button class="vp-close" aria-label="Close">×</button>
+    </div>
+    <div class="vp-body"></div>
   </div>
 </div>
 
