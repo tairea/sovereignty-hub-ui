@@ -16,7 +16,7 @@ const SPOKE_END_RADIUS = NODE_LEN / 2 + LAYERS.length * (LAYER_LEN + LAYER_GAP) 
 // small visual gap so adjacent hubs never overlap regardless of which
 // pillars happen to be facing each other.
 const LABEL_HALF_WIDTH = 1.7;
-const VISUAL_GAP = 1.5;
+const VISUAL_GAP = 10;
 const HUB_FOOTPRINT = (SPOKE_END_RADIUS + LABEL_HALF_WIDTH + VISUAL_GAP) * 2;
 
 const COL_STEP = HUB_FOOTPRINT;
@@ -50,8 +50,12 @@ let mode = 'grid';
 // Grid mode state
 let gridScene = null;
 let gridCamera = null;
-let hubs = []; // [{ group, pillarNodes, record, x, z }]
+let hubs = []; // [{ group, pillarNodes, record, x, z, pickDisc }]
 let allBarMeshes = [];
+let hubPickMeshes = []; // invisible discs for picking the hub center
+
+// Viewer-mode rotate-to-pillar animation
+let viewerAnimState = null; // { startRotY, endRotY, startTime, duration }
 
 // Viewer mode state (single hub centered for reading)
 let viewerScene = null;
@@ -62,25 +66,33 @@ let viewerRotation = { y: 0, x: 0 }; // user-controlled rotation
 let viewerDragState = null;
 let popupTarget = null; // { pIdx, lIdx }
 
-// ---------- Camera state ----------
-// Parameterised as a target point on the grid plane (y=0) plus a "height"
-// above the plane. The camera tilts slightly toward +Z so hubs read with
-// a hint of perspective instead of dead-on top-down.
-let cameraTargetZ = 0;           // where the camera looks (smoothed)
-let cameraTargetZGoal = 0;       // where it is scrolling toward
-let cameraHeight = 30;           // current distance above grid (smoothed)
-let cameraHeightGoal = 30;       // where zoom is going
-const CAMERA_TILT_RATIO = 0.30;  // tiltOffsetZ / height
+// ---------- Camera state (orbit model) ----------
+// Camera orbits a target point on the grid plane. Pitch (elevation) and
+// yaw (azimuth) tilt the view; distance is the zoom. All four are smoothed
+// toward their *Goal counterparts each frame.
+const cameraTarget = new THREE.Vector3(0, 0, 0);
+const cameraTargetGoal = new THREE.Vector3(0, 0, 0);
+let cameraDistance = 30;
+let cameraDistanceGoal = 30;
+let cameraAzimuth = 0;                                              // yaw, radians
+let cameraAzimuthGoal = 0;
+const ELEV_DEFAULT = THREE.MathUtils.degToRad(72);                  // mostly top-down
+const ELEV_MIN = THREE.MathUtils.degToRad(15);
+const ELEV_MAX = THREE.MathUtils.degToRad(89);
+let cameraElevation = ELEV_DEFAULT;
+let cameraElevationGoal = ELEV_DEFAULT;
 const ZOOM_MIN = 8;
-const ZOOM_MAX = 180;
+const ZOOM_MAX = 300;
 
-// ---------- Per-hub drag state ----------
-// dragState shapes:
-//   { kind: 'rotate-hub', hubIdx, startX, startY, startRotY, moved }
-//   { kind: 'scroll-grid', startX, startY, startTargetZ, moved }
+// ---------- Drag state ----------
+// dragState.kind:
+//   'rotate-hub' — left-drag on a hub spins that hub
+//   'orbit'      — left-drag on empty space tilts/yaws the grid camera
+//   'pan'        — right-drag anywhere pans the camera target
 let dragState = null;
 let pinchState = null;
 const DRAG_THRESHOLD_PX = 6;
+const HUB_PICK_RADIUS = RING_RADIUS * 1.05;     // include center disc in pick
 
 // ---------- Public API ----------
 export function open() {
@@ -157,11 +169,15 @@ function startScene() {
   gridScene.background = null;
 
   const rect = host.getBoundingClientRect();
-  gridCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 1000);
-  cameraTargetZ = 0;
-  cameraTargetZGoal = 0;
-  cameraHeight = 30;
-  cameraHeightGoal = 30;
+  gridCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 2000);
+  cameraTarget.set(0, 0, 0);
+  cameraTargetGoal.set(0, 0, 0);
+  cameraDistance = 30;
+  cameraDistanceGoal = 30;
+  cameraAzimuth = 0;
+  cameraAzimuthGoal = 0;
+  cameraElevation = ELEV_DEFAULT;
+  cameraElevationGoal = ELEV_DEFAULT;
   positionGridCamera();
 
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -180,6 +196,7 @@ function startScene() {
   host.addEventListener('pointerup', onPointerUp);
   host.addEventListener('pointercancel', onPointerUp);
   host.addEventListener('wheel', onWheel, { passive: false });
+  host.addEventListener('contextmenu', onContextMenu);
   host.addEventListener('touchstart', onTouchStart, { passive: false });
   host.addEventListener('touchmove', onTouchMove, { passive: false });
   host.addEventListener('touchend', onTouchEnd);
@@ -208,6 +225,7 @@ function stopScene() {
     host.removeEventListener('pointerup', onPointerUp);
     host.removeEventListener('pointercancel', onPointerUp);
     host.removeEventListener('wheel', onWheel);
+    host.removeEventListener('contextmenu', onContextMenu);
     host.removeEventListener('touchstart', onTouchStart);
     host.removeEventListener('touchmove', onTouchMove);
     host.removeEventListener('touchend', onTouchEnd);
@@ -216,6 +234,8 @@ function stopScene() {
   for (const h of hubs) disposeGroup(h.group);
   hubs = [];
   allBarMeshes = [];
+  hubPickMeshes = [];
+  viewerAnimState = null;
   if (viewerHub) { disposeGroup(viewerHub.group); viewerHub = null; viewerBarMeshes = []; }
   if (renderer) {
     renderer.dispose();
@@ -245,8 +265,8 @@ function onResize() {
   }
   renderer.setSize(rect.width, rect.height);
   if (popupTarget) updatePopupPosition();
-  // On resize, re-fit so the layout adapts to orientation / window changes.
   if (mode === 'grid') fitAllHubs();
+  else if (mode === 'viewer') fitViewerHub();
 }
 
 // ---------- Loading hubs ----------
@@ -308,11 +328,22 @@ function buildHubs(records) {
     hub.group.position.set(x, 0, z);
     gridScene.add(hub.group);
 
+    // Invisible pick disc covering the whole ring footprint so clicks on
+    // the center (hub badge area) also register on this hub.
+    const pickGeo = new THREE.CircleGeometry(HUB_PICK_RADIUS, 32);
+    const pickMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
+    const pickDisc = new THREE.Mesh(pickGeo, pickMat);
+    pickDisc.rotation.x = -Math.PI / 2;
+    pickDisc.userData = { hubIdx: i };
+    hub.group.add(pickDisc);
+    hubPickMeshes.push(pickDisc);
+
     const entry = {
       idx: i, x, z,
       group: hub.group,
       pillarNodes: hub.pillarNodes,
       record: rec,
+      pickDisc,
     };
     hubs.push(entry);
     for (const m of hub.allBarMeshes) {
@@ -331,26 +362,26 @@ function fitAllHubs() {
   const zs = hubs.map((h) => h.z);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minZ = Math.min(...zs), maxZ = Math.max(...zs);
-  // Each hub occupies a rough HUB_FOOTPRINT square — include those bounds,
-  // not just the centers.
   const spreadX = (maxX - minX) + HUB_FOOTPRINT;
   const spreadZ = (maxZ - minZ) + HUB_FOOTPRINT;
+  const centerX = (minX + maxX) / 2;
   const centerZ = (minZ + maxZ) / 2;
 
   const rect = host.getBoundingClientRect();
   const aspect = rect.width / rect.height;
   const fovY = THREE.MathUtils.degToRad(gridCamera.fov);
   const fovX = 2 * Math.atan(Math.tan(fovY / 2) * aspect);
-  // Top-down approximation; the tilt adds a little error so multiply by
-  // 1.2 padding to absorb that plus give breathing room.
   const hForX = (spreadX / 2) / Math.tan(fovX / 2);
   const hForZ = (spreadZ / 2) / Math.tan(fovY / 2);
-  const h = Math.max(hForX, hForZ) * 1.2;
+  // Perpendicular distance needed to fit. cameraDistance is the slant
+  // distance from target — divide by sin(elev) to convert.
+  const perp = Math.max(hForX, hForZ) * 1.15;
+  const dist = perp / Math.sin(cameraElevationGoal);
 
-  cameraHeight = h;
-  cameraHeightGoal = h;
-  cameraTargetZ = centerZ;
-  cameraTargetZGoal = centerZ;
+  cameraTargetGoal.set(centerX, 0, centerZ);
+  cameraTarget.copy(cameraTargetGoal);
+  cameraDistance = dist;
+  cameraDistanceGoal = dist;
 }
 
 // ---------- Interaction ----------
@@ -363,12 +394,29 @@ function pickBarAt(clientX, clientY, meshList, camForRay) {
   return hits.length > 0 ? hits[0] : null;
 }
 
+function onContextMenu(e) { e.preventDefault(); }
+
 function onPointerDown(e) {
-  if (e.button !== undefined && e.button !== 0) return;
-  // Pinch in progress? Don't start a one-finger drag.
   if (pinchState) return;
+  const isRight = e.button === 2;
   if (mode === 'grid') {
-    const hit = pickBarAt(e.clientX, e.clientY, allBarMeshes, gridCamera);
+    if (isRight) {
+      // Right-drag (anywhere) = pan.
+      dragState = {
+        kind: 'pan',
+        startX: e.clientX, startY: e.clientY,
+        startTargetX: cameraTargetGoal.x,
+        startTargetZ: cameraTargetGoal.z,
+        moved: false,
+      };
+      host.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (e.button !== undefined && e.button !== 0) return;
+    // Left-button: hit a hub (bar OR center disc) → rotate that hub on drag,
+    // open viewer on click. Empty space → orbit camera.
+    const meshes = [...allBarMeshes, ...hubPickMeshes];
+    const hit = pickBarAt(e.clientX, e.clientY, meshes, gridCamera);
     if (hit) {
       const hubIdx = hit.object.userData.hubIdx;
       dragState = {
@@ -379,16 +427,17 @@ function onPointerDown(e) {
         moved: false,
       };
     } else {
-      // Empty space → pan/scroll the grid.
       dragState = {
-        kind: 'scroll-grid',
+        kind: 'orbit',
         startX: e.clientX, startY: e.clientY,
-        startTargetZ: cameraTargetZGoal,
+        startAzimuth: cameraAzimuthGoal,
+        startElevation: cameraElevationGoal,
         moved: false,
       };
     }
     host.setPointerCapture(e.pointerId);
   } else if (mode === 'viewer') {
+    if (e.button !== undefined && e.button !== 0) return;
     viewerDragState = {
       startX: e.clientX, startY: e.clientY,
       startRotY: viewerRotation.y,
@@ -408,19 +457,32 @@ function onPointerMove(e) {
     if (dragState.kind === 'rotate-hub') {
       const factor = (Math.PI * 2) / 400;
       hubs[dragState.hubIdx].group.rotation.y = dragState.startRotY + dx * factor;
-    } else if (dragState.kind === 'scroll-grid') {
-      // Convert px → world units based on current camera height + FOV so
-      // the grid pans 1:1 with the cursor regardless of zoom.
+    } else if (dragState.kind === 'orbit') {
+      const azFactor = (Math.PI * 2) / 600;
+      const elFactor = Math.PI / 400;
+      cameraAzimuthGoal = dragState.startAzimuth - dx * azFactor;
+      cameraElevationGoal = Math.max(ELEV_MIN, Math.min(ELEV_MAX, dragState.startElevation + dy * elFactor));
+    } else if (dragState.kind === 'pan') {
+      // Convert pixels to world units at the target plane.
       const fovY = THREE.MathUtils.degToRad(gridCamera.fov);
-      const worldPerPx = (2 * cameraHeight * Math.tan(fovY / 2)) / host.clientHeight;
-      cameraTargetZGoal = dragState.startTargetZ - dy * worldPerPx;
-      clampCameraTarget();
+      const perp = cameraDistance * Math.sin(cameraElevation);
+      const worldPerPx = (2 * perp * Math.tan(fovY / 2)) / host.clientHeight;
+      // Pan along camera's screen-right (rotated by azimuth on XZ) and the
+      // ground-projected forward (which is -cos / -sin azimuth in XZ).
+      const sinAz = Math.sin(cameraAzimuth);
+      const cosAz = Math.cos(cameraAzimuth);
+      const rightX = cosAz, rightZ = -sinAz;
+      const fwdX = sinAz,  fwdZ = cosAz; // ground-projected forward from camera toward target
+      cameraTargetGoal.x = dragState.startTargetX - dx * worldPerPx * rightX - dy * worldPerPx * fwdX;
+      cameraTargetGoal.z = dragState.startTargetZ - dx * worldPerPx * rightZ - dy * worldPerPx * fwdZ;
     }
   } else if (mode === 'viewer' && viewerDragState) {
     const dx = e.clientX - viewerDragState.startX;
     const dy = e.clientY - viewerDragState.startY;
     if (!viewerDragState.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) viewerDragState.moved = true;
     if (viewerDragState.moved) {
+      // User started dragging — cancel any in-progress rotate-to-pillar animation.
+      viewerAnimState = null;
       const factor = (Math.PI * 2) / 400;
       viewerRotation.y = viewerDragState.startRotY + dx * factor;
       viewerHub.group.rotation.y = viewerRotation.y;
@@ -444,6 +506,7 @@ function onPointerUp(e) {
     viewerDragState = null;
     if (wasClick && hit) {
       const { pIdx, lIdx } = hit.object.userData;
+      rotateHubToPillar(pIdx);
       showPopupForLayer(pIdx, lIdx);
     } else if (wasClick) {
       hidePopup();
@@ -454,10 +517,8 @@ function onPointerUp(e) {
 function onWheel(e) {
   e.preventDefault();
   if (mode !== 'grid') return;
-  // wheel-up (negative deltaY) zooms in (smaller height).
-  // 1.0015^120 ≈ 1.2 per notch — feels about right.
   const factor = Math.pow(1.0015, e.deltaY);
-  cameraHeightGoal = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cameraHeightGoal * factor));
+  cameraDistanceGoal = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cameraDistanceGoal * factor));
 }
 
 function touchDistance(touches) {
@@ -468,11 +529,10 @@ function touchDistance(touches) {
 
 function onTouchStart(e) {
   if (e.touches.length === 2 && mode === 'grid') {
-    // Two-finger pinch: cancel any in-progress one-finger drag.
     dragState = null;
     pinchState = {
       startDistance: touchDistance(e.touches),
-      startHeight: cameraHeightGoal,
+      startCamDistance: cameraDistanceGoal,
     };
   }
 }
@@ -483,7 +543,7 @@ function onTouchMove(e) {
     const d = touchDistance(e.touches);
     if (d > 0 && pinchState.startDistance > 0) {
       const factor = pinchState.startDistance / d;
-      cameraHeightGoal = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchState.startHeight * factor));
+      cameraDistanceGoal = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchState.startCamDistance * factor));
     }
   }
 }
@@ -492,17 +552,20 @@ function onTouchEnd(e) {
   if (e.touches.length < 2) pinchState = null;
 }
 
-function clampCameraTarget() {
-  if (hubs.length === 0) { cameraTargetZGoal = 0; return; }
-  const minZ = hubs[0].z - HUB_FOOTPRINT;
-  const maxZ = hubs[hubs.length - 1].z + HUB_FOOTPRINT;
-  cameraTargetZGoal = Math.max(minZ, Math.min(maxZ, cameraTargetZGoal));
-}
+// Pan/orbit are free-form; no clamping. Users can fit-all again to re-center.
+function clampCameraTarget() { /* no-op */ }
 
 function positionGridCamera() {
   if (!gridCamera) return;
-  gridCamera.position.set(0, cameraHeight, cameraTargetZ + cameraHeight * CAMERA_TILT_RATIO);
-  gridCamera.lookAt(0, 0, cameraTargetZ);
+  // Spherical orbit around cameraTarget.
+  const cosE = Math.cos(cameraElevation);
+  const sinE = Math.sin(cameraElevation);
+  gridCamera.position.set(
+    cameraTarget.x + cameraDistance * cosE * Math.sin(cameraAzimuth),
+    cameraTarget.y + cameraDistance * sinE,
+    cameraTarget.z + cameraDistance * cosE * Math.cos(cameraAzimuth),
+  );
+  gridCamera.lookAt(cameraTarget);
 }
 
 // ---------- Viewer mode (single hub fullscreen) ----------
@@ -533,10 +596,8 @@ function enterViewer(rec) {
   built.group.rotation.y = 0;
 
   const rect = host.getBoundingClientRect();
-  viewerCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 100);
-  // Same framing as main viz so it feels familiar
-  viewerCamera.position.set(0, 14, 1.5);
-  viewerCamera.lookAt(0, 0, 0);
+  viewerCamera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 200);
+  fitViewerHub();
 
   updateChrome();
 }
@@ -598,13 +659,68 @@ function updatePopupPosition() {
 function loop() {
   if (!renderer) return;
   if (mode === 'grid') {
-    cameraTargetZ += (cameraTargetZGoal - cameraTargetZ) * 0.18;
-    cameraHeight += (cameraHeightGoal - cameraHeight) * 0.2;
+    cameraTarget.x += (cameraTargetGoal.x - cameraTarget.x) * 0.2;
+    cameraTarget.z += (cameraTargetGoal.z - cameraTarget.z) * 0.2;
+    cameraDistance += (cameraDistanceGoal - cameraDistance) * 0.2;
+    cameraAzimuth += (cameraAzimuthGoal - cameraAzimuth) * 0.2;
+    cameraElevation += (cameraElevationGoal - cameraElevation) * 0.2;
     positionGridCamera();
     renderer.render(gridScene, gridCamera);
   } else if (mode === 'viewer' && viewerScene && viewerCamera) {
+    if (viewerAnimState) stepViewerAnim();
     renderer.render(viewerScene, viewerCamera);
     if (popupTarget) updatePopupPosition();
   }
   animFrame = requestAnimationFrame(loop);
+}
+
+function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; }
+
+function rotateHubToPillar(pIdx) {
+  if (!viewerHub) return;
+  // Pillars are laid out with angle = (pIdx/N)*2π - π/2 in the hub's local
+  // frame, so pillar 0 (Water) already sits at -z (toward camera = "top").
+  // To bring pillar pIdx to that position, rotate hub by -(pIdx/N)*2π.
+  const targetRotY = -(pIdx / PILLARS.length) * Math.PI * 2;
+  const current = viewerRotation.y;
+  // Shortest path: normalize delta into (-π, π]
+  let delta = targetRotY - current;
+  delta = ((delta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  if (Math.abs(delta) < 0.001) return;
+  viewerAnimState = {
+    startRotY: current,
+    endRotY: current + delta,
+    startTime: performance.now(),
+    duration: 550,
+  };
+}
+
+function stepViewerAnim() {
+  const t = Math.min(1, (performance.now() - viewerAnimState.startTime) / viewerAnimState.duration);
+  const e = easeInOutCubic(t);
+  viewerRotation.y = viewerAnimState.startRotY + (viewerAnimState.endRotY - viewerAnimState.startRotY) * e;
+  viewerHub.group.rotation.y = viewerRotation.y;
+  if (t >= 1) viewerAnimState = null;
+}
+
+// Fit the viewer hub so its full footprint (bars + labels) fills the viewport.
+function fitViewerHub() {
+  if (!viewerCamera) return;
+  const rect = host.getBoundingClientRect();
+  const aspect = rect.width / rect.height;
+  const fovY = THREE.MathUtils.degToRad(viewerCamera.fov);
+  const fovX = 2 * Math.atan(Math.tan(fovY / 2) * aspect);
+  const fullR = SPOKE_END_RADIUS + LABEL_HALF_WIDTH;
+  const distForX = fullR / Math.tan(fovX / 2);
+  const distForY = fullR / Math.tan(fovY / 2);
+  const perp = Math.max(distForX, distForY) * 1.15;
+  // Mostly top-down with the same tilt as the main viz
+  const elev = THREE.MathUtils.degToRad(80);
+  const distance = perp / Math.sin(elev);
+  viewerCamera.position.set(
+    0,
+    distance * Math.sin(elev),
+    distance * Math.cos(elev),
+  );
+  viewerCamera.lookAt(0, 0, 0);
 }
