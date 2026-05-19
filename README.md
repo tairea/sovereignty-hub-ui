@@ -1,15 +1,14 @@
-# hub-ui
+# Sovereignty Hub UI
 
-Sovereignty Hub web app: 13-Pillars survey, 3D hub visualization, globe-network view, Supabase-backed hub directory.
+A user interface for the [Sovereignty Hub System](https://github.com/overkillkulture/sovereignty-hub) developed by OverkillKulture.
 
-Migrated from the standalone `sovereignty-survey.html` in `../sovereignty-hub`.
+![Sovereignty Hub UI](./screenshot-ui.png)
 
 ## Stack
 
 - **Vite** — dev server + build
-- **Three.js** — survey visualization
-- **globe.gl** — global hub-network view (Phase 2)
-- **@supabase/supabase-js** — auth + hub directory (Phase 3)
+- **Three.js** — 13-pillar survey visualization
+- **@supabase/supabase-js** — magic-link auth + per-user state sync
 - **Font Awesome** (via CDN in `index.html`) — pillar icons
 
 ## Run
@@ -22,25 +21,30 @@ npm run build    # → dist/
 
 ## Environment
 
-Copy `.env.sample` to `.env` and fill the Supabase keys (already filled in this repo). Vite exposes any `VITE_*` env var to the client at build time.
+Copy `.env.sample` to `.env` and fill the Supabase keys. Vite exposes any `VITE_*` env var to the client at build time.
 
 ## Layout
 
 ```
 hub-ui/
-├── index.html        # entry document (head + body shell)
+├── index.html                # entry document
 ├── src/
-│   ├── main.js       # bootstrap + everything wired together
-│   ├── style.css     # all styles
+│   ├── main.js               # bootstrap + everything wired together
+│   ├── style.css             # all styles
 │   └── lib/
-│       └── geocode.js  # Nominatim address → {lat, lng}
+│       ├── supabase.js       # Supabase client
+│       ├── auth.js           # magic-link auth state
+│       ├── db.js             # profile + survey_state sync
+│       └── survey-content/   # per-pillar question + phase copy
+├── supabase/
+│   └── schema.sql            # tables, RLS, trigger, storage bucket
 └── vite.config.js
 ```
 
 ## Roadmap
 
 - [x] Phase 0 — Vite scaffold + monolithic file split
-- [ ] Phase 1 — Location capture via typed address (Nominatim)
-- [ ] Phase 2 — Globe view (graph ↔ globe toggle)
-- [ ] Phase 3 — Supabase auth (magic link) + sync
+- [x] Phase 1 — Supabase auth (magic link)
+- [x] Phase 2 — Per-user survey + hub state sync to Supabase
+- [ ] Phase 3 — Globe view (graph ↔ globe toggle)
 - [ ] Phase 4 — Multi-hub discovery on the globe
