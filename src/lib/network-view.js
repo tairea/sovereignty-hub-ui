@@ -152,8 +152,8 @@ function updateChrome() {
     titleEl.textContent = viewerHub?.record?.hub_name || 'Hub';
     countEl.textContent = '';
   } else {
-    titleEl.textContent = 'All Hubs';
-    countEl.textContent = hubs.length ? `· ${hubs.length} hub${hubs.length === 1 ? '' : 's'}` : '';
+    titleEl.textContent = 'All Sovereignty Hubs';
+    countEl.textContent = hubs.length ? `· ${hubs.length} Hub${hubs.length === 1 ? '' : 's'}` : '';
   }
 }
 
